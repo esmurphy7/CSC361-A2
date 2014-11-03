@@ -1,0 +1,349 @@
+<!DOCTYPE html PUBLIC "-//w3c//dtd html 4.0 transitional//en">
+<!-- saved from url=(0061)http://www.cs.ucsb.edu/~almeroth/classes/S00.276/hw1/hw1.html -->
+<html><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+   
+   <meta name="GENERATOR" content="Mozilla/4.7 [en] (X11; U; SunOS 5.7 sun4u) [Netscape]">
+   <title>CS 276 Homework 1</title>
+<style type="text/css"></style></head>
+<body>
+
+<center>
+<h2>
+<b>CS 276: Distributed Computing and Computer Networks<br>
+Homework Assignment #1</b></h2></center>
+
+<h2>
+Introduction</h2>
+In this assignment, you will implement a reliable, sequenced message transport
+protocol (RMTP) on top of UDP. ``Reliable'' means that messages are delivered
+reliably ``end to end'' in the face of packet drops within the network,
+while ``sequenced'' means that messages are delivered to the receiver in
+the order they were generated at the sender. The RMTP protocol described
+herein supports simplex (i.e., unidirectional) data transfer and is robust
+against packet reordering, duplication, and corruption. RMTP also supports
+a simple congestion control strategy that modulates the sender's window
+to limit its transmission rate. Your assignment is to implement a RMTP
+sender and all of the required services.
+<p>Unlike TCP, RMTP ``preserves'' message boundaries and is thus not a
+logical byte stream. In addition, RMTP is asymmetric: the sender and the
+receiver are distinct entities that behave differently. Data flows in the
+forward direction and acknowledgements flow in the reverse direction. Data
+packets cannot be sent from the receiver to the sender and acknowledgements
+cannot be sent from the sender to the receiver.
+</p><p>Recall that UDP is stateless and unreliable. In order to implement reliability
+on top of UDP, an RMTP conversation requires connection state at both comminucation
+end-points. Hence, RMTP must be a connection-oriented protocol and must
+include phases for connection setup and teardown.
+</p><p>You will format RMTP packet headers on top of the simple UDP socket
+interface. In this approach, the RMTP sender ``fills in'' header fields
+in the first part of the UDP payload, sends the UDP packet over the network
+(via the socket interface) to the receiving host, which reads the UDP packet,
+parses the RMTP headers, and takes appropriate action. Normally, an arbitrary
+``application'' invokes a protocol like RMTP, but for our purposes, we
+will simplify the configuration so that a single ``file transfer function''
+is rather tightly integrated into our protocol implementation.
+</p><h2>
+RMTP</h2>
+The RMTP packet header layout is given in the adjacent figure. As with
+TCP, all RMTP packet headers look alike, but unlike TCP, we use a type
+field rather than flags to distinguish different packet types.<img src="./Reliability on top of UDP (Assignment)_files/rmtp-hdr.gif" hspace="25" vspace="10" align="LEFT">
+The TYPE field says whether the packet is a data packet, acknowledge, SYN,
+FIN, or reset. The type codes are as follows:
+<pre>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; DATA = 1
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ACK = 2
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; SYN = 3
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; FIN = 4
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; RST = 5</pre>
+The WINDOW field is valid only for packets of type 2 (ACK) and indicates
+the receivers advertised window. This field must be set to 0 for all non-ACK
+packets.
+<p>The SEQNO field indicates the sequence number of the packet. For type
+1 packets (DATA), the sequence number increases for each consecutive packet.
+For type 2 packets (ACK), the sequence number indicates the number of next
+packet expected by the receiver. For type 3 and 4 packets (SYN and FIN),
+the sequence number indicates the sequence number of the first data packet
+of the connection (SYN) or one past the last data packet of the connection
+(FIN). In other words, the SYN and FIN packets demarcate the sequence boundary
+of the connection incarnation.
+</p><p>The packet header along with a number of other useful definitions is
+included in <a href="http://www.cs.ucsb.edu/~almeroth/classes/S00.276/hw1/rmtp.h">rmtp.h</a>.
+A sample C structure that define the RMTP header is as follows:
+</p><pre>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; struct rmtphdr {
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; u_int32_t type;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; u_int32_t window;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; u_int32_t seqno;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; };</pre>
+The maximum message size in RMTP is 1024 bytes. The actual message size
+can be smaller than this, but it is not explicitly carried in the RMTP
+because the lower layer protocol (i.e., IP and UDP) carries the packet
+length.
+<p>Note that we are ``borrowing'' the port fields from UDP. Rather than
+implement packet demultiplexing in RMTP, we simply let UDP carry out demultiplexing
+and implement RMTP on top of this.
+</p><h3>
+State Diagram</h3>
+Because RMTP is connection-oriented, a handshake protocol must be devised
+to initiate connection setup and teardown. During connection setup, initial
+sequence numbers are exchanged.
+<p>The state diagram for RMTP is as follows:
+</p><center><img src="./Reliability on top of UDP (Assignment)_files/rmtp-states.gif" vspace="10"></center>
+Note that the asymmetry of the protocol leads to separate finite state
+machines for the sender and the receiver.
+<p>Initially, the receiver is in the CLOSED state. Upon issuing a (passive)
+open, it enters the LISTEN state, and at that point, waits for a SYN packet
+to arrive (on the specified UDP port). When the SYN arrives, the receiver
+ACKs the SYN and transitions to the EST (established) state. In this state,
+the data transfer ensues under the normal sliding window protocol with
+congestion control. Upon reception of a FIN packet, the receiver ACKs the
+FIN packet and enters the TIME_WAIT state. While in TIME_WAIT, the receiver
+ACKs retransmitted FIN packets but ignores all other packets. After two
+maximum segment lifetimes (MSLs), the receiver leaves TIME_WAIT and enters
+the CLOSED state. For this assignment, assume an MSL is 20 seconds.
+</p><p>As with the receiver, the sender starts in the CLOSED state. Upon issuing
+an (active) open, the source sends a SYN packet to the receiver (on the
+specified address and port) and enters the SYN_SENT state. The SYN packet's
+sequence number contains the initial sequence number (ISN) of the conversation.
+The receiver should be prepared to handle any initial sequence number represented
+in 32 bits. If the sender's SYN packet is not ACK'd within a reasonable
+amount of time, the SYN must be retransmitted. If the SYN is not ACK'd
+after three retransmission attempts, an error is returned to the application
+and a RST packet is sent to the destination address and port. If the SYN
+is acknowledged correctly (i.e., the ACK sequence number is ISN + 1), the
+sender enters the EST state and starts sending data packets. When the sending
+application is finished generating data, it issues a ``close'' operation
+on the RMTP layer. This causes the sender to enter the CLOSING state. At
+this point, there may or may not be unacknowledged data buffered at the
+sender. Once all the data has been transmitted and acknowledged, the sender
+sends a FIN packet and enters the FIN_WAIT state. The FIN packet's sequence
+number must be one more than the sequence number of the last data packet.
+Once the FIN packet is acknowledged,(the sequence number of the acknowldgement
+must be one larger than that of the FIN packet) the sender moves directly
+to the closed state.
+</p><p>If the protocol detects that the other side is misbehaving, it should
+reset the connection by sending a RST packet. The sequence number and window
+fields should be 0 in this type of packet. Note that the other side might
+appear to be misbehaving because a delayed or duplicate control packet
+(e.g., a SYN or FIN). In this case, the message should be gracefully ignored.
+If the message could only have come from another incarnation of the connection
+or a buggy implementation, the connection should in fact be reset. You
+can assume that the 2 MSL wait guarantees that multiple incarnatations
+do not overlap (even though you do not have to implement all the mechanism
+to guarantee this). For example, if a data packet arrives when the receiver
+is in the LISTEN state, then the source must be misbehaving because it
+should not send any data packets until its SYN packet is acknowledged,
+which would imply that the receiver is in the EST state (assuming separate
+connections do not overlap). But, if the receiver receives a SYN while
+in the EST state, then it should be ignored because it simply might be
+a delayed, duplicate packet.
+</p><h2>
+Implementation</h2>
+We will provide you with an implemention of the RMTP receiver process and
+it is your task to implement the sender. To use the protocol, you'll need
+to implement a very simple ``application programming interface'' (API)
+consisting of three routines:
+<ul>
+<li>
+struct rmtp_sender_pcb *<b>rmtp_sender_open</b>(u_int32_t dst, int sport,
+int rport);</li>
+
+<li>
+void <b>rmtp_send</b>(struct rmtp_sender_pcb* pcb, char* data, int len);</li>
+
+<li>
+int <b>rmtp_sender_close</b>(struct rmtp_rcvr_pcb *pcb);</li>
+</ul>
+These procedures carry out the obvious functions: opening and establishing
+the connection, sending data over the connection, and closing, flushing,
+and tearing down the connection.
+<p>Normally, a protocol implementation consists of a number of concurrent
+processes, each executing some portion of the protocol, and all synchronizing
+together to effect the distributed protocol. To simplify matters, you should
+instead implement the sender protocol using a single thread of control
+within a "polling loop" inside rmtp_send. Feel free to implement this as
+you see fit, but one possible decomposition for rmtp_send is as follows:
+</p><ul>
+<li>
+(1) if the sliding window is full, call a "do work" procedure to run the
+protocol a bit (to allow ACKs and retransmissions to be carried out)</li>
+
+<li>
+(2) copy the message passed to rmtp_send to a packet buffer and assign
+it the sequence number</li>
+
+<li>
+(3) process any ACKs that are immediately ready (i.e., call readWithTimer
+in <a href="http://www.cs.ucsb.edu/~almeroth/classes/S00.276/hw1/rmtp.c">rmtp.c</a> with a
+timeout of 0)</li>
+
+<li>
+(4) send as many packets as the window permits</li>
+
+<li>
+(5) return</li>
+</ul>
+If we assume that rmtp_send is continuously invoked, then the data transfer
+will proceed as we expect. Eventually, rmtp_close is called, and the protocol
+should finish processing any outstanding data then initiate connection
+teardown. You might want to start from our skeleton
+<a href="http://www.cs.ucsb.edu/~almeroth/classes/S00.276/hw1/sender-template.c">sender-template.c</a>
+(rename to sender.c) and use the input file <a href="http://www.cs.ucsb.edu/~almeroth/classes/S00.276/hw1/inputFile">testInput</a>
+<p>You should use our <a href="http://www.cs.ucsb.edu/~almeroth/classes/S00.276/hw1/Makefile">Makefile</a>
+to build two programs: our reference program called ``receiver'' and the
+program you must write called ``sender''. They should both take exactly
+three command line arguments consisting of a destination address (a), a
+destination port (p), and a source port (q). The respective process (either
+sender or receiver) transmits all RMTP packets to the IP destination ``a''
+using UDP destination port ``p'' and source port ``q'', and receives and
+RMTP packet sent to it from the IP host with address ``a'' on UDP port
+``q''. The sender should use RMTP to transfer the contents of a called
+``testInput'' (in the current directory) to the receiver. The receiver
+stores the output in a file called ``testOutput''. You can diff the contents
+of the two files to make sure your implementation functions correctly (at
+least in part).
+</p><p>Your sender protocol must include a congestion control algorithm. For
+this assignment, you should implement slow-start and congestion avoidance
+(additive increase, multiplicative decrease) in the spirit of TCP. A simple
+scheme is sufficient. You need not worry about more advanced techniques
+like fast retransmit, fast recovery, or selective ACKs.
+</p><p>To recap, your assignment is to convert sender-template.c into sender.c
+and implement all of the necessary functions. You can build receiver from
+all of the parts available via the Assignment #1 WWW page. You'll need
+these 5 files:
+</p><ul>
+<li>
+<a href="http://www.cs.ucsb.edu/~almeroth/classes/S00.276/hw1/receiver.c">receiver.c</a></li>
+
+<li>
+<a href="http://www.cs.ucsb.edu/~almeroth/classes/S00.276/hw1/rmtp.c">rmtp.c</a></li>
+
+<li>
+<a href="http://www.cs.ucsb.edu/~almeroth/classes/S00.276/hw1/rmtp.h">rmtp.h</a></li>
+
+<li>
+<a href="http://www.cs.ucsb.edu/~almeroth/classes/S00.276/hw1/sender-template.c">sender-template.c</a>
+(rename as sender.c)</li>
+
+<li>
+<a href="http://www.cs.ucsb.edu/~almeroth/classes/S00.276/hw1/Makefile">Makefile</a></li>
+</ul>
+Just type ``make receiver''. Once you've created sender.c from
+<a href="http://www.cs.ucsb.edu/~almeroth/classes/S00.276/hw1/sender-template.c">sender-template.c</a>,
+you can run ``make sender'' to build the sender application.
+<h3>
+Simplifications</h3>
+Even a simple ARQ protocol like RMTP requires a fair amount of work, so
+we will make a number of additional simplifying assumptions:
+<ul>
+<li>
+You need not implement round-trip time estimation; instead, just use a
+two second timeout. That is, in step (5) of the sender polling loop, you
+should issue a read with a two second timeout.</li>
+
+<li>
+The CLOSED state does not have to be implemented. Instead, assume that
+the invocation of your test program implies that the active open happens
+immediately. Thus upon start-up, the sender should immediately send a SYN
+and enter the SYN_SENT state.</li>
+
+<li>
+Rather than wait 2 MSLs, the receiver enters TIME_WAIT indefinitely (after
+connection teardown) until the program is terminated with a Ctrl-C. This
+will allow sender to retransmit FIN packets as necessary.</li>
+
+<li>
+The receiver does not implement dynamic adjustment of its advertised window
+to effect flow control; rather it sets the window to some fixed value (i.e.,
+RMTP_MAXWIN as defined in <a href="http://www.cs.ucsb.edu/~almeroth/classes/S00.276/hw1/rmtp.h">rmtp.h</a>).
+However, your sender should respond correctly to a receiver that does in
+fact shut down the window (e.g., we may test your implementation against
+a more elaborate receiver). You can assume that the receiver never closes
+the window all the way to 0, so that you do not need to implement ``window
+probes''.</li>
+</ul>
+
+<h3>
+Sequence Number Comparisons</h3>
+Because sequence numbers wrap, you must be prepared to compare their value
+in modulo arithmetic. For example, 0xffffffff is two sequence numbers before
+1 (for 32-bit sequence numbers), but an unsigned integer comparison would
+give the wrong result. The following macros, from <a href="http://www.cs.ucsb.edu/~almeroth/classes/S00.276/hw1/rmtp.h">rmtp.h</a>,
+can be used to compare sequence numbers in a fairly portable way:
+<pre>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; #define SEQ_LT(a,b)&nbsp;&nbsp;&nbsp;&nbsp; ((int)((a)-(b)) &lt; 0)
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; #define SEQ_LEQ(a,b)&nbsp;&nbsp;&nbsp; ((int)((a)-(b)) &lt;= 0)
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; #define SEQ_GT(a,b)&nbsp;&nbsp;&nbsp;&nbsp; ((int)((a)-(b)) &gt; 0)
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; #define SEQ_GEQ(a,b)&nbsp;&nbsp;&nbsp; ((int)((a)-(b)) &gt;= 0)</pre>
+You might consult <a href="http://www.cs.ucsb.edu/~almeroth/classes/S00.276/hw1/receiver.c">receiver.c</a>
+to see how these macros are utilized therein.
+<h3>
+Byte Order</h3>
+Different computer systems represent multi-byte integers using different
+conventions for byte order. In ``little-endian'' machines, for example,
+the least significant byte appears at the lowest memory address, while
+``big-endian'' machines using the opposite convention. Because of this,
+care must be exercised when sending multi-byte packet fields over the network.
+In particular, agreement must be on what format and byte-order convention
+is adopted for network transmission. Most often, the big-endian convention
+is adopted and little-endian machines must perform format conversion when
+reading and writing network data. In order to write portable code, a set
+of system functions/macros has been standardized that do nothing on big-endian
+machines and expand to the proper conversion code on little-endian machines.
+Look at the man pages for
+<i>ntohl</i>,
+<i>htonl</i>,
+<i>ntohs</i>, and
+<i>htons</i>
+for more details.
+<h3>
+Testing</h3>
+Debugging and testing your protocol will not be easy. Designing a complete
+set of tests cases is part of the assignment. Some hints are described
+below.
+<p>You should probably do most of your initial testing in a local environment
+without actually going over the network. You can do this easily by sending
+packets to ``localhost'', which gets directed to a special software interface
+called the ``loopback interface''. All packets sent to the loopback interface
+are looped back to the local host. Consequently, you can test your program
+by running the receiver in one window or command shell:
+</p><pre>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; % ./receiver localhost 3001 3000</pre>
+and the sender in another window or command shell:
+<pre>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; % ./sender localhost 3000 3001</pre>
+Note that the port numbers are swapped in the too cases so that the two
+programs plug together in the natural fashion.
+<p>You'll probably need to do debugging, so be prepared to run the above
+programs from within a debugger like gdb. For reference, see<a href="http://www.cs.ucsb.edu/~almeroth/classes/S00.276/hw1/gdbf.html">gdb1</a>and
+<a href="http://www.cs.ucsb.edu/~almeroth/classes/S00.276/hw1/gdbc.html">gdb2</a>. Once you
+have your program running, you'll need to find a way to generate an interesting
+network environment where congestion occurs in a well defined fashion,
+where packet losses and duplicates sometimes happen. The easiest suggestion
+is to add into the receiver functions to randomly drop packets (data or
+ACK packets), duplicate them, delay them, etc. You can be sure that we
+will test your program to see that your protocol functions correctly.
+</p><h2>
+What to turn in</h2>
+After you implement, debug, and throroughly verify your protocol implementation,
+you should submit your program via the turnin program before midnight on
+the due date. Your program should build against our
+<a href="http://www.cs.ucsb.edu/~almeroth/classes/S00.276/hw1/Makefile">Makefile</a>
+and the available other source files. Your grade will be based on the actual
+code (which should include comments for full credit) as well as the resulting
+behavior. We will test your sender against a more elaborate version of
+our receiver (which might drop, duplicate, or otherwise corrupt the packet
+stream). We will also check that you've implemented a sound congestion
+control strategy.
+<br>&nbsp;
+<h2>
+How to turn in</h2>
+Use turnin tool to turn in your homework. From any GSL&nbsp;or CSIL machines,
+type:
+<br><tt>promtp&gt;</tt>&nbsp;&nbsp; <tt>turnin&nbsp; hw1@cs276&nbsp;&nbsp;
+files-or-directories</tt>
+<br>&nbsp;
+<h2>
+Hints</h2>
+Start early. Writing and debugging distributed protocols is hard! This
+assignment should give you an appreciation for the difficulty of protocol
+and congestion control implementation. Good luck!
+<hr>
+
+
+</body></html>
