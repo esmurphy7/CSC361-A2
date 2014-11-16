@@ -3,37 +3,32 @@
  * 		Trim the very last packet of the file of excess null memory
  * 		Calculate and include the window size in packet header upon creation
  * 		Init first_seqno to random number
+ * 		Change max payload size from 1024 to 1024-header_size
  */
 /*
  * QUESTIONS:
  * 			- After how many seconds of no and/or garbage response do we terminate and/or resend packets?
+ * 			- What exactly defines a packet with errors? How can my sender/receiver identify a packet as having errors?
+ * 			- How should my sender/receiver handle packets with errors? Discard them? Attempt to fix them?
  * 			- Does a RST packet mean terminate?
+ * 			- How to choose a window size and packet size?
+ * 			- Why random seqno?
+ * 			- Need to transfer different types of files? How does this affect the way I store packet payload (char*)?
+ * 			- Anyway to connect to “WAN” interface (10.10.1.100) and “LAN” interfaces (192.168.1.100) remotely?
  */
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include <sys/file.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <sys/time.h>
-#include <unistd.h>
 #include <math.h>
-#include <stdbool.h>
 #include <pthread.h>
 
-#include "rdps.h"
+#include "packet.h"
+#include "timer.h"
 
 // ============== Prototypes =============
 void setup_connection(char*,int,char*,int);
 void packetize(char*, int);
-struct packet* create_packet(char*, int, int, int);
-void store_dataPacket(struct packet*);
 void initiate_transfer();
-void send_packet(struct packet*);
 void wait_response();
 void terminate(int);
-char* type_itos(int);
 // =============== Globals ===============
 /* List of data packets to be sent */
 struct packet** data_packets;
@@ -42,8 +37,6 @@ struct packet_timer** timer_list;
 pthread_mutex_t timers_mutex = PTHREAD_MUTEX_INITIALIZER;
 /* Initial SYN's seqno */
 int first_seqno;
-/* Track the current sequence number during packetizing */
-int current_seqno;;
 int window_size;
 /* Connection globals */
 int socketfd;
@@ -126,12 +119,12 @@ void setup_connection(char* sender_ip, int sender_port, char* receiver_ip, int r
 	memset(&adr_sender,0,sizeof adr_sender);
 	adr_sender.sin_family = AF_INET;
 	adr_sender.sin_port = htons(sender_port);
-	adr_sender.sin_addr.s_addr = atoi(sender_ip);
+	adr_sender.sin_addr.s_addr = inet_addr(sender_ip);
 	// Create receiver address
 	memset(&adr_receiver,0,sizeof adr_receiver);
 	adr_receiver.sin_family = AF_INET;
 	adr_receiver.sin_port = htons(receiver_port);
-	adr_receiver.sin_addr.s_addr = atoi(receiver_ip);
+	adr_receiver.sin_addr.s_addr = inet_addr(receiver_ip);
 	// Error check addresses
 	if ( adr_sender.sin_addr.s_addr == INADDR_NONE ||
 		 adr_receiver.sin_addr.s_addr == INADDR_NONE )
@@ -145,6 +138,7 @@ void setup_connection(char* sender_ip, int sender_port, char* receiver_ip, int r
 		perror("sender: bind()\n");
 		exit(-1);
 	}
+	printf("sender: running on %s:%d\n",inet_ntoa(adr_sender.sin_addr), ntohs(adr_sender.sin_port));
 }
 
 /*
@@ -157,7 +151,6 @@ void packetize(char* data, int file_length)
 	char* pckt_data;	// Bytes meant for a packet
 
 	first_seqno = 0;
-	current_seqno = first_seqno + 1;
 	// Move bytes from data buffer into pckt_data and create packets
 	current_byte = 0;
 	bytes_read = 0;
@@ -169,8 +162,8 @@ void packetize(char* data, int file_length)
 		if(bytes_read == MAX_PAYLOAD_SIZE)
 		{
 			//printf("Current byte: %d, Bytes read: %d\n",current_byte, bytes_read);
-			struct packet* pckt = create_packet(pckt_data, bytes_read, DAT, current_seqno);
-			store_dataPacket(pckt);
+			struct packet* pckt = create_packet(pckt_data, bytes_read, DAT, current_byte - bytes_read + 1);
+			add_packet(pckt, data_packets);
 			free(pckt_data);
 			pckt_data = (char*)malloc(sizeof(pckt_data)*MAX_PAYLOAD_SIZE);
 			bytes_read = 0;
@@ -180,93 +173,18 @@ void packetize(char* data, int file_length)
 	}
 	// End of file, packet size is less than MAX_PAYLOAD_SIZE
 	//		=>Shave off empty memory
-	struct packet* pckt = create_packet(pckt_data, bytes_read, DAT, current_seqno);
-	store_dataPacket(pckt);
+	struct packet* pckt = create_packet(pckt_data, bytes_read, DAT, current_byte);
+	add_packet(pckt, data_packets);
 
 	printf("sender: end of file\n");
 	// Debug: print list of data packets
 	int i = 0;
 	while(data_packets[i] != NULL)
 	{
-		//if(i<15){printf("data packet %d seqno: %d, ackno: %d\n",i,data_packets[i]->header.seqno, data_packets[i]->header.ackno);}
+		if(i<15){printf("data packet %d seqno: %d, ackno: %d\n",i,data_packets[i]->header.seqno, data_packets[i]->header.ackno);}
 		i++;
 	}
 	free(data);
-}
-
-/*
- * Create a single packet of type "pckt_type"
- */
-struct packet* create_packet(char* data, int data_length, int pckt_type, int seqno)
-{
-	//printf("creating %s packet...\n", type_itos(pckt_type));
-	struct packet_hdr header;
-	struct packet* pckt;
-	char* pckt_data;
-
-	int ackno;
-	switch(pckt_type)
-	{
-		case SYN:
-			ackno = seqno + 1;
-			break;
-
-		case DAT:
-			seqno = current_seqno;
-			current_seqno += data_length;
-			ackno = current_seqno;
-			pckt_data = (char*)malloc(sizeof(pckt_data)*data_length);
-			strcpy(pckt_data, data);
-			break;
-
-		case ACK:
-			ackno = seqno + 1;
-			break;
-
-		case FIN:
-			ackno = seqno + 1;
-			break;
-
-		case RST:
-			ackno = seqno + 1;
-			break;
-
-		default:
-			perror("sender: unknown packet type\n");
-			exit(-1);
-	}
-
-	header.magic = "UVicCSc361";
-	header.type = pckt_type;
-	header.seqno = seqno;
-	header.ackno = ackno;
-	//header->winsize = winsize;
-	pckt = (struct packet*)malloc(sizeof(*pckt));
-	pckt->header = header;
-	pckt->payload = pckt_data;
-	pckt->payload_length = data_length;
-
-	return pckt;
-}
-
-/*
- * Store the data packet in the global list of data packets
- */
-void store_dataPacket(struct packet* pckt)
-{
-	// add packet to list of packets
-	if(pckt->header.type != DAT)
-	{
-		perror("sender: attempted to store non-DAT packet\n");
-		exit(-1);
-	}
-	int i=0;
-	while(data_packets[i] != 0)
-	{
-		i++;
-	}
-	data_packets[i] = pckt;
-	//printf("stored packet with seqno %d at data_packets[%d]\n",pckt->header.seqno,i);
 }
 
 /*
@@ -282,7 +200,10 @@ void initiate_transfer()
 
 	// send SYN
 	struct packet* SYN_pckt = create_packet(NULL, 0, SYN, first_seqno);
-	send_packet(SYN_pckt);
+	send_packet(SYN_pckt, socketfd, adr_receiver);
+	pthread_mutex_lock(&timers_mutex);
+	update_timer(SYN_pckt->header.seqno, timer_list);
+	pthread_mutex_unlock(&timers_mutex);
 	// wait on SYN's ACK
 	wait_response();
 	// send initial data packets in accordance with window size
@@ -302,62 +223,65 @@ void initiate_transfer()
 }
 
 /*
- * Send packet to receiver.
- */
-void send_packet(struct packet* pckt)
-{
-	printf("sending %s packet...\n", type_itos(pckt->header.type));
-	if(sendto(socketfd,
-				pckt,
-				sizeof(pckt),
-				0,
-				(struct sockaddr*)&adr_receiver,
-				sizeof(struct sockaddr_in)) < 0)
-	{
-		perror("sender: sendto()\n");
-		exit(-1);
-	}
-	// Add/update corresponding timer to timer_list
-	//printf("locking...\n");
-	pthread_mutex_lock(&timers_mutex);
-	struct packet_timer* timer;
-	// If timer already exists, update it
-	if((timer = find_timer(timer_list, pckt)) != NULL)
-	{
-		printf("timer with seqno %d already exists\n",pckt->header.seqno);
-		timer->time_sent = clock();
-	}
-	// Else timer doesn't exist yet, create one and add it to timer list
-	else
-	{
-		struct packet_timer* new_timer = create_timer(pckt->header.seqno, clock());
-		add_timer(timer_list, new_timer);
-	}
-	pthread_mutex_unlock(&timers_mutex);
-	printf("sender: sent %s packet\n",type_itos(pckt->header.type));
-}
-
-/*
  * Wait for ACK or RST response from receiver
  */
 void wait_response()
 {
-	char buffer[sizeof(struct packet*)];
+	//char buffer[sizeof(struct packet*)];
+	char buffer[MAX_PACKET_SIZE];
 	socklen_t receiver_len = sizeof(adr_receiver);
 
+	// When a packet is received, store its corresponding source address in adr_src
+	struct sockaddr_in adr_src;
+	memset(&adr_src,0,sizeof adr_src);
+	socklen_t src_len = sizeof(adr_src);
+	printf("sender: waiting for packet...\n");
+	// Receive incoming packet
+	// Init received packet
+	struct packet* rec_pckt = (struct packet*)malloc(sizeof(struct packet));
 	if(recvfrom(socketfd,
-					&buffer,
-					sizeof(struct packet*),
+					buffer,//buffer,
+					//sizeof(struct packet*),
+					sizeof(buffer),
 					0,
-					(struct sockaddr*)&adr_receiver,
-					&receiver_len) < 0)
+					(struct sockaddr*)&adr_src,
+					&src_len) < 0)
 	{
 		perror("sender: recvfrom()\n");
 		exit(-1);
 	}
-	// Init received packet
-	struct packet* received_packet = (struct packet*)malloc(sizeof(struct packet*));
-	memcpy(received_packet, &buffer, sizeof(struct packet*));
+	printf("sender: packet received from %s:%d\n",inet_ntoa(adr_src.sin_addr), ntohs(adr_src.sin_port));
+	printf("sender: raw message received - %s\n",buffer);
+	memcpy(rec_pckt, &buffer, sizeof(struct packet));
+	char* magic_hdr = rec_pckt->header.magic;
+	printf("sender: payload received - %s\n",rec_pckt->payload);
+	// Assert that the packet has the magic header field
+	if(magic_hdr == MAGIC_HDR)
+	{
+		printf("sender: packet received is RUDP packet\n");
+		switch(rec_pckt->header.type)
+		{
+			case DAT:
+				break;
+			case SYN:
+				break;
+			case ACK:
+				break;
+			case RST:
+				break;
+			case FIN:
+				break;
+			default:
+				perror("sender: received packet has bad type\n");
+				exit(-1);
+		}
+	}
+	else
+	{
+		printf("sender: packet received is not RUDP packet\n");
+		// Ignore non-RUDP packets
+		return;
+	}
 	// ACK received
 
 	// RST received
@@ -379,35 +303,6 @@ void terminate(int code)
 	exit(0);
 }
 
-/*
- * Convert packet type from int to string (for printing purposes)
- */
-char* type_itos(int pckt_type)
-{
-	char* type = (char*)malloc(sizeof(type)*3);
-	switch(pckt_type)
-	{
-		case SYN:
-			type = "SYN";
-			break;
-		case DAT:
-			type = "DAT";
-			break;
-		case ACK:
-			type = "ACK";
-			break;
-		case FIN:
-			type = "FIN";
-			break;
-		case RST:
-			type = "RST";
-			break;
-		default:
-			perror("sender: attempted to convert unknown packet type\n");
-			exit(-1);
-	}
-	return type;
-}
 
 
 
