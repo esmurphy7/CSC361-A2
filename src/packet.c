@@ -154,7 +154,7 @@ char* construct_string(struct packet* pckt)
 
 struct packet* deconstruct_string(char* buffer)
 {
-	printf("deconstructing %s...\n",buffer);
+	//printf("deconstructing %s...\n",buffer);
 	struct packet* pckt = (struct packet*)malloc(sizeof(pckt));
 	char* magic = (char*)malloc(sizeof(magic)*MAX_PAYLOAD_SIZE);
 	char* type = (char*)malloc(sizeof(type)*MAX_PAYLOAD_SIZE);
@@ -169,7 +169,7 @@ struct packet* deconstruct_string(char* buffer)
 	int i;
 	for(i=0; i<strlen(buffer); i++)
 	{
-		printf("buffer[%d]: %c\n",i,buffer[i]);
+		//printf("buffer[%d]: %c\n",i,buffer[i]);
 		if(buffer[i] == ';')
 		{
 			num_semicolons++;
@@ -204,7 +204,7 @@ struct packet* deconstruct_string(char* buffer)
 		}
 		else
 			cur_field = charAppend(cur_field, buffer[i]);
-		printf("current field: %s\n",cur_field);
+		//printf("current field: %s\n",cur_field);
 	}
 	strcpy(pckt->header.magic, magic);
 	pckt->header.type = atoi(type);

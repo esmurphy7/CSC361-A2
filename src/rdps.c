@@ -252,8 +252,10 @@ void wait_response()
 	// Deconstruct message string into packet
 	struct packet* rec_pckt = deconstruct_string(buffer);
 	print_contents(rec_pckt);
+	printf("packet magic header: %s\n",rec_pckt->header.magic);
+	printf("MAGIC_HDR: %s\n",MAGIC_HDR);
 	// Assert that the packet has the magic header field
-	if(rec_pckt->header.magic == MAGIC_HDR)
+	if(strcmp(rec_pckt->header.magic, MAGIC_HDR) == 0)
 	{
 		printf("sender: packet received is RUDP packet\n");
 		switch(rec_pckt->header.type)
