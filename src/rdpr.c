@@ -29,8 +29,8 @@ int main(int argc, char* argv[])
 
 	setup_connection(receiver_ip, receiver_port);
 
-	char test_data[MAX_PACKET_SIZE] = "this is a test packet\n";
-	struct packet* test_pckt = create_packet(test_data, MAX_PACKET_SIZE, DAT, 69);
+	char test_data[MAX_PAYLOAD_SIZE] = "this is a test packet";
+	struct packet* test_pckt = create_packet(test_data, MAX_PAYLOAD_SIZE, DAT, 69);
 	send_packet(test_pckt, socketfd, adr_sender);
 
 	return 0;

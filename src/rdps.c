@@ -96,11 +96,11 @@ int main(int argc, char* argv[])
 	// Init globals
 	data_packets = (struct packet**)calloc(num_packets, sizeof(struct packet*));
 	window_size = file_length/10;
+	printf("window size: %d\n",window_size);
 
 	setup_connection(sender_ip, sender_port, receiver_ip, receiver_port);
 	packetize(data, file_length);
 	initiate_transfer();
-	printf("window size: %d\n",window_size);
 	return 0;
 }
 
@@ -227,22 +227,19 @@ void initiate_transfer()
  */
 void wait_response()
 {
-	//char buffer[sizeof(struct packet*)];
-	char buffer[MAX_PACKET_SIZE];
-	socklen_t receiver_len = sizeof(adr_receiver);
-
+	//char buffer[MAX_PACKET_SIZE];
+	char* buffer = (char*)malloc(sizeof(char*)*MAX_PACKET_SIZE);
 	// When a packet is received, store its corresponding source address in adr_src
 	struct sockaddr_in adr_src;
 	memset(&adr_src,0,sizeof adr_src);
 	socklen_t src_len = sizeof(adr_src);
 	printf("sender: waiting for packet...\n");
 	// Receive incoming packet
-	// Init received packet
-	struct packet* rec_pckt = (struct packet*)malloc(sizeof(struct packet));
+	//printf("sizeof(buffer) %lu\n",sizeof(buffer));
 	if(recvfrom(socketfd,
 					buffer,//buffer,
 					//sizeof(struct packet*),
-					sizeof(buffer),
+					sizeof(char*)*MAX_PACKET_SIZE,
 					0,
 					(struct sockaddr*)&adr_src,
 					&src_len) < 0)
@@ -252,11 +249,11 @@ void wait_response()
 	}
 	printf("sender: packet received from %s:%d\n",inet_ntoa(adr_src.sin_addr), ntohs(adr_src.sin_port));
 	printf("sender: raw message received - %s\n",buffer);
-	memcpy(rec_pckt, &buffer, sizeof(struct packet));
-	char* magic_hdr = rec_pckt->header.magic;
-	printf("sender: payload received - %s\n",rec_pckt->payload);
+	// Deconstruct message string into packet
+	struct packet* rec_pckt = deconstruct_string(buffer);
+	print_contents(rec_pckt);
 	// Assert that the packet has the magic header field
-	if(magic_hdr == MAGIC_HDR)
+	if(rec_pckt->header.magic == MAGIC_HDR)
 	{
 		printf("sender: packet received is RUDP packet\n");
 		switch(rec_pckt->header.type)
@@ -287,6 +284,7 @@ void wait_response()
 	// RST received
 
 }
+
 
 /*
  * Terminate the transfer process with failure or success
