@@ -27,7 +27,6 @@
 void setup_connection(char*,int,char*,int);
 void packetize(char*, int);
 void initiate_transfer();
-void wait_response();
 void terminate(int);
 // =============== Globals ===============
 /* List of data packets to be sent */
@@ -181,10 +180,10 @@ void packetize(char* data, int file_length)
 	int i = 0;
 	while(data_packets[i] != NULL)
 	{
-		if(i<15){printf("data packet %d seqno: %d, ackno: %d\n",i,data_packets[i]->header.seqno, data_packets[i]->header.ackno);}
+		if(i){printf("data packet %d seqno: %d, ackno: %d\n",i,data_packets[i]->header.seqno, data_packets[i]->header.ackno);}
 		i++;
 	}
-	free(data);
+
 }
 
 /*
@@ -195,7 +194,7 @@ void initiate_transfer()
 	// Init list of timers
 	timer_list = (struct packet_timer**)calloc(MAX_TIMERS, sizeof(struct packet_timer*));
 	// Start thread to poll list of timers and check if any have timed out
-	pthread_t pthread;
+	//pthread_t pthread;
 	//pthread_create(&pthread, NULL, , );
 
 	// send SYN
@@ -205,86 +204,59 @@ void initiate_transfer()
 	update_timer(SYN_pckt->header.seqno, timer_list);
 	pthread_mutex_unlock(&timers_mutex);
 	// wait on SYN's ACK
-	wait_response();
-	// send initial data packets in accordance with window size
+	while(1)
+	{
+		struct packet* rec_pckt = receive_packet(socketfd);
+		if(rec_pckt && rec_pckt->header.type == ACK)
+		{
+			printf("sender: SYN acknowledged\n");
+			break;
+		}
+		if(clock()/CLOCKS_PER_SEC >= SENDER_TIMEOUT_S)
+		{
+			terminate(-2);
+		}
+	}
+	// Init window
+	struct window window;
+	window.size = WINDOW_SIZE;
+	window.occupied = 0;
+	window.base_seqno = data_packets[0]->header.seqno;
+	// Send initial wave of data packets and fill the window
+	// for each data packet
+	int i;
+	for(i=0; data_packets[i] != 0; i++)
+	{
+		// if window is not full
+		if(window.occupied != window.size)
+		{
+			// send the data packet
+			send_packet(data_packets[i], socketfd, adr_receiver);
+			// update occupied space in window
+			window.occupied += data_packets[i]->payload_length;
+		}
+		// else window is full
+		else
+		{
+			break;
+		}
+
+	}
 
 	while(1)
 	{
-		// wait_response
+		// wait for packet
 		// send new data packets if allowed
-		// send FIN if all data packets successfully ACK'd
 		// if there are any timedout timers
 			// resend corresponding data packets
 		// if all data packets ACK'd
 			// send FIN
 			// wait_response
-
-	}
-}
-
-/*
- * Wait for ACK or RST response from receiver
- */
-void wait_response()
-{
-	//char buffer[MAX_PACKET_SIZE];
-	char* buffer = (char*)malloc(sizeof(char*)*MAX_PACKET_SIZE);
-	// When a packet is received, store its corresponding source address in adr_src
-	struct sockaddr_in adr_src;
-	memset(&adr_src,0,sizeof adr_src);
-	socklen_t src_len = sizeof(adr_src);
-	printf("sender: waiting for packet...\n");
-	// Receive incoming packet
-	//printf("sizeof(buffer) %lu\n",sizeof(buffer));
-	if(recvfrom(socketfd,
-					buffer,//buffer,
-					//sizeof(struct packet*),
-					sizeof(char*)*MAX_PACKET_SIZE,
-					0,
-					(struct sockaddr*)&adr_src,
-					&src_len) < 0)
-	{
-		perror("sender: recvfrom()\n");
-		exit(-1);
-	}
-	printf("sender: packet received from %s:%d\n",inet_ntoa(adr_src.sin_addr), ntohs(adr_src.sin_port));
-	printf("sender: raw message received - %s\n",buffer);
-	// Deconstruct message string into packet
-	struct packet* rec_pckt = deconstruct_string(buffer);
-	print_contents(rec_pckt);
-	printf("packet magic header: %s\n",rec_pckt->header.magic);
-	printf("MAGIC_HDR: %s\n",MAGIC_HDR);
-	// Assert that the packet has the magic header field
-	if(strcmp(rec_pckt->header.magic, MAGIC_HDR) == 0)
-	{
-		printf("sender: packet received is RUDP packet\n");
-		switch(rec_pckt->header.type)
+		if(clock()/CLOCKS_PER_SEC >= SENDER_TIMEOUT_S)
 		{
-			case DAT:
-				break;
-			case SYN:
-				break;
-			case ACK:
-				break;
-			case RST:
-				break;
-			case FIN:
-				break;
-			default:
-				perror("sender: received packet has bad type\n");
-				exit(-1);
+			terminate(-2);
 		}
 	}
-	else
-	{
-		printf("sender: packet received is not RUDP packet\n");
-		// Ignore non-RUDP packets
-		return;
-	}
-	// ACK received
-
-	// RST received
-
 }
 
 
@@ -294,9 +266,14 @@ void wait_response()
  */
 void terminate(int code)
 {
-	if(code < 0)
+	if(code == -1)
 	{
 		perror("sender: terminating with failure (RST)\n");
+		exit(-1);
+	}
+	else if(code == -2)
+	{
+		perror("sender: terminating, transfer took too long\n");
 		exit(-1);
 	}
 	printf("sender: terminating with success (FIN)\n");
