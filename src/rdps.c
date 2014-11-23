@@ -25,7 +25,7 @@
 // ============== Prototypes =============
 void setup_connection(char*,int,char*,int);
 void packetize(char*, int);
-void initiate_transfer();
+void initiate_transfer(int);
 void handle_packet(struct packet*);
 void* poll_timers();
 void resend_timedoutPackets();
@@ -102,7 +102,7 @@ int main(int argc, char* argv[])
 
 	setup_connection(sender_ip, sender_port, receiver_ip, receiver_port);
 	packetize(data, file_length);
-	initiate_transfer();
+	initiate_transfer(file_length+MAX_PAYLOAD_SIZE-1);
 	return 0;
 }
 
@@ -183,7 +183,7 @@ void packetize(char* data, int file_length)
 	int i = 0;
 	while(data_packets[i] != NULL)
 	{
-		//if(i){printf("data packet %d seqno: %d, ackno: %d\n",i,data_packets[i]->header.seqno, data_packets[i]->header.ackno);}
+		if(i){printf("data packet %d seqno: %d, ackno: %d\n",i,data_packets[i]->header.seqno, data_packets[i]->header.ackno);}
 		i++;
 	}
 }
@@ -191,7 +191,7 @@ void packetize(char* data, int file_length)
 /*
  * Begin the file transfer process
  */
-void initiate_transfer()
+void initiate_transfer(int last_ackno)
 {
 	// Init list of timers
 	timer_list = (struct packet_timer**)calloc(MAX_TIMERS, sizeof(struct packet_timer*));
@@ -199,10 +199,24 @@ void initiate_transfer()
 	pthread_t pthread;
 	pthread_create(&pthread, NULL, poll_timers, NULL);
 
+	// Create and add all DAT timers, don't start them until they're sent
+	printf("Creating and adding DAT timers...\n");
+	pthread_mutex_lock(&timers_mutex);
+	int j;
+	for(j=0; data_packets[j] != 0; j++)
+	{
+		struct packet_timer* DAT_timer = create_timer(data_packets[j]->header.ackno, clock());
+		add_timer(timer_list, DAT_timer);
+	}
+	//print_stoppedTimers(timer_list);
+	pthread_mutex_unlock(&timers_mutex);
+
 	// send SYN
 	struct packet* SYN_pckt = create_packet(NULL, 0, SYN, first_seqno);
 	send_packet(SYN_pckt, socketfd, adr_receiver);
 	pthread_mutex_lock(&timers_mutex);
+	struct packet_timer* SYN_timer = create_timer(SYN_pckt->header.ackno, clock());
+	add_timer(timer_list, SYN_timer);
 	start_timer(SYN_pckt->header.ackno, timer_list);
 	pthread_mutex_unlock(&timers_mutex);
 	// wait on SYN's ACK
@@ -273,12 +287,14 @@ void initiate_transfer()
 		{
 			printf("ALL PACKETS ACKNOWLEDGED\n");
 			// send FIN
-			int FIN_seqno = 69696969;
+			int FIN_seqno = last_ackno;
 			struct packet* FIN_pckt = create_packet(NULL, 0, FIN, FIN_seqno);
 			send_packet(FIN_pckt, socketfd, adr_receiver);
 			// Start its timer
 			pthread_mutex_lock(&timers_mutex);
-			start_timer(FIN_pckt->header.ackno, timer_list);
+			struct packet_timer* FIN_timer = create_timer(data_packets[i]->header.ackno, clock());
+			add_timer(timer_list, FIN_timer);
+			start_timer(FIN_timer->pckt_ackno, timer_list);
 			pthread_mutex_unlock(&timers_mutex);
 			// wait for FIN's ACK
 			rec_pckt = receive_packet(socketfd, &adr_src);

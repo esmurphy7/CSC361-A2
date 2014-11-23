@@ -12,7 +12,7 @@ struct packet_timer* create_timer(int pckt_ackno, int time)
 	struct packet_timer* timer = (struct packet_timer*)malloc(sizeof(*timer));
 	timer->pckt_ackno = pckt_ackno;
 	timer->time_sent = time;
-	timer->running = true;
+	timer->running = false;
 	timer->timedout = false;
 	return timer;
 }
@@ -41,8 +41,8 @@ void stop_timer(struct packet_timer** timer_list, int ackno)
 	else
 	{
 		printf("Could not find timer with ackno->%d to stop\n",ackno);
-		print_runningTimers(timer_list);
-		print_stoppedTimers(timer_list);
+		//print_runningTimers(timer_list);
+		//print_stoppedTimers(timer_list);
 		exit(-1);
 	}
 }
@@ -102,7 +102,7 @@ void start_timer(int ackno, struct packet_timer** timer_list)
 	// If timer already exists, update it
 	if((timer = find_timer(timer_list, ackno)) != NULL)
 	{
-		printf("Restarting timer %d\n",ackno);
+		printf("Starting/Restarting timer %d\n",ackno);
 		timer->time_sent = clock();
 		timer->running = true;
 		timer->timedout = false;
@@ -110,8 +110,8 @@ void start_timer(int ackno, struct packet_timer** timer_list)
 	// Else timer doesn't exist yet, create one and add it to timer list
 	else
 	{
-		struct packet_timer* new_timer = create_timer(ackno, clock());
-		add_timer(timer_list, new_timer);
+		printf("Cannot start timer, timer %d doesn't exist, quitting\n", ackno);
+		exit(-1);
 	}
 }
 
