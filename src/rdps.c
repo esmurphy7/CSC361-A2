@@ -28,6 +28,8 @@ void packetize(char*, int);
 void initiate_transfer(int);
 void handle_packet(struct packet*);
 void* poll_timers();
+void fill_window(struct window*);
+void update_windowBase(struct window*);
 void resend_timedoutPackets();
 bool allPacketsAcknowledged();
 void terminate(int);
@@ -238,35 +240,16 @@ void initiate_transfer(int last_ackno)
 		}
 	}
 	// Init window
-	struct window window;
-	window.size = WINDOW_SIZE;
-	window.occupied = 0;
-	window.base_seqno = data_packets[0]->header.seqno;
-	// Send initial wave of data packets and fill the window
-	// for each data packet
-	printf("sender: initial wave of data...\n");
-	int i;
-	for(i=0; data_packets[i] != 0; i++)
-	{
-		// if window is not full
-		if(window.occupied != window.size)
-		{
-			// send the data packet
-			send_packet(data_packets[i], socketfd, adr_receiver);
-			// Start its timer
-			pthread_mutex_lock(&timers_mutex);
-			start_timer(data_packets[i]->header.ackno, timer_list);
-			pthread_mutex_unlock(&timers_mutex);
-			// update occupied space in window
-			window.occupied += data_packets[i]->payload_length;
-		}
-		// else window is full
-		else
-		{
-			break;
-		}
-	}
+	struct window* window = (struct window*)malloc(sizeof(*window));
+	window->size = WINDOW_SIZE;
+	window->occupied = 0;
+	window->base_seqno = data_packets[0]->header.seqno;
 
+	// Send initial wave of data packets to fill the window
+	printf("sender: initial wave of data...\n");
+	fill_window(window);
+
+	// Receive ACKs, send data to fill the window, and check for timeouts
 	while(1)
 	{
 		pthread_mutex_lock(&timers_mutex);
@@ -278,7 +261,11 @@ void initiate_transfer(int last_ackno)
 		struct packet* rec_pckt = receive_packet(socketfd, &adr_src);
 		// handle received ACKs
 		handle_packet(rec_pckt);
-		// send new data packets if window permits
+		// Update the window's base_seqno as ACKs are received
+		update_windowBase(window);
+		/* send new data packets if window permits */
+		fill_window(window);
+
 		printf("Resending timedout packets...\n");
 		resend_timedoutPackets();
 		// check if all the data packets have been successfully acknowledged
@@ -292,7 +279,7 @@ void initiate_transfer(int last_ackno)
 			send_packet(FIN_pckt, socketfd, adr_receiver);
 			// Start its timer
 			pthread_mutex_lock(&timers_mutex);
-			struct packet_timer* FIN_timer = create_timer(data_packets[i]->header.ackno, clock());
+			struct packet_timer* FIN_timer = create_timer(FIN_pckt->header.ackno, clock());
 			add_timer(timer_list, FIN_timer);
 			start_timer(FIN_timer->pckt_ackno, timer_list);
 			pthread_mutex_unlock(&timers_mutex);
@@ -336,6 +323,70 @@ void* poll_timers()
 	// return for compiler
 	return NULL;
 }
+/*
+ * Send fresh data packets to fill the window
+ */
+void fill_window(struct window* window)
+{
+	int i;
+	for(i=0; data_packets[i] != 0; i++)
+	{
+		// if window is not full
+		if(window->occupied < window->size)
+		{
+			// if data_packet is within the window
+			if(data_packets[i]->header.seqno >= window->base_seqno &&
+				data_packets[i]->header.seqno <= window->base_seqno + window->size)
+			{
+				// send the data packet
+				send_packet(data_packets[i], socketfd, adr_receiver);
+				// Start its timer
+				pthread_mutex_lock(&timers_mutex);
+				start_timer(data_packets[i]->header.ackno, timer_list);
+				pthread_mutex_unlock(&timers_mutex);
+				// update occupied space in window
+				window->occupied += data_packets[i]->payload_length;
+			}
+		}
+		// else window is full
+		else
+		{
+			break;
+		}
+	}
+}
+
+/*
+ * Update the window's base_seqno based on the data packets ACK'd so far
+ */
+void update_windowBase(struct window* window)
+{
+	// for every data packet
+	int i;
+	for(i=0; data_packets[i] != 0; i++)
+	{
+		// if it is the window's base
+		if(data_packets[i]->header.seqno == window->base_seqno)
+		{
+			struct packet_timer* timer;
+			if((timer = find_timer(timer_list, data_packets[i]->header.ackno)) != NULL)
+			{
+				// if packet has been ACK'd
+				if(timer->running == false)
+				{
+					// move window base up to next packet's seqno
+					if(data_packets[i+1] != 0)
+					{
+						window->base_seqno = data_packets[i+1]->header.seqno;
+						window->occupied -= data_packets[i+1]->payload_length;
+
+					}
+				}
+			}
+		}
+	}
+}
+
 /*
  * Resend any packets that have timed out, based on their "timedout" value
  */
