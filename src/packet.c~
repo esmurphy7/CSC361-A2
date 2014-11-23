@@ -86,7 +86,7 @@ void send_packet(struct packet* pckt, int socketfd, struct sockaddr_in adr_dest)
 	// Construct a string from the packet that can be sent over the network
 	char* buffer = construct_string(pckt);
 	//char* buffer = "this is a test buffer\n";
-	//if(pckt->header.seqno){printf("sending string: %s\n", buffer);}
+	if(pckt->header.seqno){printf("sending string: %s\n", buffer);}
 	if(sendto(socketfd,
 				buffer,
 				strlen(buffer),
@@ -97,14 +97,11 @@ void send_packet(struct packet* pckt, int socketfd, struct sockaddr_in adr_dest)
 		perror("sendto()\n");
 		exit(-1);
 	}
-	printf("sent %s packet seqno->%d, ackno->%d to %s:%d\n",
-											type_itos(pckt->header.type),
-											pckt->header.seqno,
-											pckt->header.ackno,
+	/*printf("sent %s packet to %s:%d\n",type_itos(pckt->header.type),
 											inet_ntoa(adr_dest.sin_addr),
 											ntohs(adr_dest.sin_port));
-
-	//if(pckt->header.seqno){printf("sent string: %s\n", buffer);}
+								*/
+	if(pckt->header.seqno){printf("sent string: %s\n", buffer);}
 	free(buffer);
 }
 
@@ -115,19 +112,19 @@ void send_packet(struct packet* pckt, int socketfd, struct sockaddr_in adr_dest)
 struct packet* receive_packet(int socketfd, struct sockaddr_in* adr_src)
 {
 	int buffer_size = 1056;
-	char* buffer = (char*)malloc(sizeof(char*)*PACKET_SIZE);
+	char* buffer = (char*)malloc(sizeof(char*)*buffer_size);//PACKET_SIZE
 	// When a packet is received, store its corresponding source address in adr_src
 	if(!adr_src)
 	{
 		adr_src = (struct sockaddr_in*)malloc(sizeof(struct sockaddr_in*));
 	}
 	socklen_t src_len = sizeof(adr_src);
-	printf("\nwaiting for packet...\n");
+	printf("waiting for packet...\n");
 	// Receive incoming packet
 	//printf("sizeof(buffer) %lu\n",sizeof(buffer));
 	if(recvfrom(socketfd,
 					buffer,
-					PACKET_SIZE,//PACKET_SIZE
+					buffer_size,//PACKET_SIZE
 					0,
 					(struct sockaddr*)adr_src,
 					&src_len) < 0)
@@ -135,15 +132,15 @@ struct packet* receive_packet(int socketfd, struct sockaddr_in* adr_src)
 		perror("recvfrom()\n");
 		exit(-1);
 	}
-	//printf("packet received from %s:%d\n",inet_ntoa(adr_src->sin_addr), ntohs(adr_src->sin_port));
-	//printf("raw message received - %s\n",buffer);
+	printf("packet received from %s:%d\n",inet_ntoa(adr_src->sin_addr), ntohs(adr_src->sin_port));
+	printf("raw message received - %s\n",buffer);
 	// Deconstruct message string into packet
 	struct packet* rec_pckt = deconstruct_string(buffer);
 	//print_contents(rec_pckt);
 	// Assert that the packet has the magic header field
 	if(strcmp(rec_pckt->header.magic, MAGIC_HDR) == 0)
 	{
-		printf("received %s packet %d\n", type_itos(rec_pckt->header.type), rec_pckt->header.seqno);
+		printf("received %s packet\n", type_itos(rec_pckt->header.type));
 		switch(rec_pckt->header.type)
 		{
 			case DAT:
@@ -233,8 +230,6 @@ struct packet* deconstruct_string(char* buffer)
 		if(buffer[i] == ';')
 		{
 			num_semicolons++;
-			if(num_semicolons > 7)
-				break;
 			switch(num_semicolons)
 			{
 				case 1:

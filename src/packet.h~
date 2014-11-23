@@ -6,9 +6,8 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <string.h>
-
 // Window size (1024*1024 = 1048576 bytes for 1mb file)
-#define WINDOW_SIZE 1024*10
+#define WINDOW_SIZE 1024*1024
 // Max number of bytes allowed in a packet
 #define PACKET_SIZE 1500
 #define MAX_PAYLOAD_SIZE 1024

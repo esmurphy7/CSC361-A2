@@ -43,7 +43,6 @@ int main(int argc, char* argv[])
 		// Receive incoming packets
 		struct sockaddr_in adr_src;
 		struct packet* rec_pckt = receive_packet(socketfd, &adr_src);
-		
 		if(rec_pckt)
 		{
 			if(rec_pckt->header.type == DAT)

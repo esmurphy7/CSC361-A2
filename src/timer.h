@@ -2,6 +2,7 @@
 #include <sys/time.h>
 #include <time.h>
 
+
 // Packet timeout value in seconds and microseconds respectively
 #define TIMEOUT_S 5
 #define TIMEOUT_US 5000000
@@ -15,10 +16,15 @@ struct packet_timer
 {
 	int pckt_seqno;
 	clock_t time_sent;
+	bool running;
+	bool timedout;
 };
 
 struct packet_timer* create_timer(int, int);
 void add_timer(struct packet_timer**, struct packet_timer*);
+void stop_timer(struct packet_timer**, int);
 struct packet_timer* find_timer(struct packet_timer**, int);
 bool timed_out(int, struct packet_timer**, int);
-void update_timer(int, struct packet_timer**);
+void start_timer(int, struct packet_timer**);
+void print_runningTimers(struct packet_timer**);
+void print_stoppedTimers(struct packet_timer**);

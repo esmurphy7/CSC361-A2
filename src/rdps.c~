@@ -1,5 +1,7 @@
-/* TODO: 	Synchronize sending the initial wave of packets and receiving their ACKs.
+/* TODO: Change byte arrays from char types to appropriate types (unsigned int?)
+ * 			- Replace string functions such as strcpy(), strlen(), (char*)malloc() with memcpy()
  * 		Trim the very last packet of the file of excess null memory
+ * 		Calculate and include the window size in packet header upon creation
  * 		Init first_seqno to random number
  * 		Change max payload size from 1024 to 1024-header_size
  */
@@ -13,7 +15,6 @@
  * 			- Why random seqno?
  * 			- Need to transfer different types of files? How does this affect the way I store packet payload (char*)?
  * 			- Anyway to connect to “WAN” interface (10.10.1.100) and “LAN” interfaces (192.168.1.100) remotely?
- 	 ROUTER: ssh csc361@192.168.1.1, ecs360
  */
 #include <sys/file.h>
 #include <math.h>
@@ -26,10 +27,6 @@
 void setup_connection(char*,int,char*,int);
 void packetize(char*, int);
 void initiate_transfer();
-void handle_packet(struct packet*);
-void* poll_timers();
-void resend_timedoutPackets();
-bool allPacketsAcknowledged();
 void terminate(int);
 // =============== Globals ===============
 /* List of data packets to be sent */
@@ -183,7 +180,7 @@ void packetize(char* data, int file_length)
 	int i = 0;
 	while(data_packets[i] != NULL)
 	{
-		//if(i){printf("data packet %d seqno: %d, ackno: %d\n",i,data_packets[i]->header.seqno, data_packets[i]->header.ackno);}
+		if(i){printf("data packet %d seqno: %d, ackno: %d\n",i,data_packets[i]->header.seqno, data_packets[i]->header.ackno);}
 		i++;
 	}
 
@@ -197,20 +194,19 @@ void initiate_transfer()
 	// Init list of timers
 	timer_list = (struct packet_timer**)calloc(MAX_TIMERS, sizeof(struct packet_timer*));
 	// Start thread to poll list of timers and check if any have timed out
-	pthread_t pthread;
-	pthread_create(&pthread, NULL, poll_timers, NULL);
+	//pthread_t pthread;
+	//pthread_create(&pthread, NULL, , );
 
 	// send SYN
 	struct packet* SYN_pckt = create_packet(NULL, 0, SYN, first_seqno);
 	send_packet(SYN_pckt, socketfd, adr_receiver);
 	pthread_mutex_lock(&timers_mutex);
-	start_timer(SYN_pckt->header.seqno, timer_list);
+	update_timer(SYN_pckt->header.seqno, timer_list);
 	pthread_mutex_unlock(&timers_mutex);
 	// wait on SYN's ACK
 	while(1)
 	{
-		struct sockaddr_in adr_src;
-		struct packet* rec_pckt = receive_packet(socketfd, &adr_src);
+		struct packet* rec_pckt = receive_packet(socketfd);
 		if(rec_pckt && rec_pckt->header.type == ACK)
 		{
 			printf("sender: SYN acknowledged\n");
@@ -228,7 +224,6 @@ void initiate_transfer()
 	window.base_seqno = data_packets[0]->header.seqno;
 	// Send initial wave of data packets and fill the window
 	// for each data packet
-	printf("sender: initial wave of data...\n");
 	int i;
 	for(i=0; data_packets[i] != 0; i++)
 	{
@@ -237,10 +232,6 @@ void initiate_transfer()
 		{
 			// send the data packet
 			send_packet(data_packets[i], socketfd, adr_receiver);
-			// Start its timer
-			pthread_mutex_lock(&timers_mutex);
-			start_timer(data_packets[i]->header.seqno, timer_list);
-			pthread_mutex_unlock(&timers_mutex);
 			// update occupied space in window
 			window.occupied += data_packets[i]->payload_length;
 		}
@@ -255,111 +246,19 @@ void initiate_transfer()
 	while(1)
 	{
 		// wait for packet
-		struct sockaddr_in adr_src;
-		struct packet* rec_pckt = receive_packet(socketfd, &adr_src);
-		// handle received ACKs
-		handle_packet(rec_pckt);
-		// send new data packets if window permits
-		printf("Resending timedout packets...\n");
-		resend_timedoutPackets();
-		if(allPacketsAcknowledged())
-		{
+		// send new data packets if allowed
+		// if there are any timedout timers
+			// resend corresponding data packets
+		// if all data packets ACK'd
 			// send FIN
-			// wait for FIN's ACK
-		}
-		// Global timeout
+			// wait_response
 		if(clock()/CLOCKS_PER_SEC >= SENDER_TIMEOUT_S)
 		{
 			terminate(-2);
 		}
 	}
 }
-/*
- * pthread routine: Any timers that have timed out get their "timedout" value set to true
- */
-void* poll_timers()
-{
-	while(1)
-	{
-		pthread_mutex_lock(&timers_mutex);
-		int i;
-		for(i=0; timer_list[i] != 0; i++)
-		{
-			struct packet_timer* timer = timer_list[i];
-			if(timed_out(timer->pckt_seqno, timer_list, clock()))
-			{
-				timer->timedout = true;
-			}
-		}
-		pthread_mutex_unlock(&timers_mutex);
-	}
-	// return for compiler
-	return NULL;
-}
-/*
- * Resend any packets that have timed out, based on their "timedout" value
- */
-void resend_timedoutPackets()
-{
-	pthread_mutex_lock(&timers_mutex);
-	int i;
-	for(i=0; timer_list[i] != 0; i++)
-	{
-		struct packet_timer* timer = timer_list[i];
-		if(timer->timedout == true)
-		{
-			int j;
-			for(j=0; data_packets[j] != 0; j++)
-			{
-				if(data_packets[j]->header.seqno == timer->pckt_seqno)
-				{
-					// resend the data packet
-					send_packet(data_packets[i], socketfd, adr_receiver);
-					// restart its timer
-					start_timer(data_packets[i]->header.seqno, timer_list);
-				}
-			}
-		}
-	}
-	pthread_mutex_unlock(&timers_mutex);
-}
 
-/*
- * Return true if all data packets have been acknowledged, false otherwise
- */
-bool allPacketsAcknowledged()
-{
-	// for every data packet
-		// if it has been ACK'd
-			// continue
-		// else return false
-	// return true
-}
-/*
- * Handle packets from the receiver
- */
-void handle_packet(struct packet* pckt)
-{
-	switch(pckt->header.type)
-	{
-		case DAT:
-			break;
-		case ACK:
-			// mark data packet as acknowledged by stopping its timer
-			pthread_mutex_lock(&timers_mutex);
-			stop_timer(timer_list, pckt->header.seqno);
-			pthread_mutex_unlock(&timers_mutex);
-			break;
-		case SYN:
-			break;
-		case RST:
-			break;
-		case FIN:
-			break;
-		default:
-			break;
-	}
-}
 
 /*
  * Terminate the transfer process with failure or success
