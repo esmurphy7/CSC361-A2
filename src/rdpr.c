@@ -95,9 +95,9 @@ void setup_connection(char* receiver_ip, int receiver_port)
 	memset(&adr_sender,0,sizeof adr_sender);
 	adr_sender.sin_family = AF_INET;
 	adr_sender.sin_port = htons(8080);
-	adr_sender.sin_addr.s_addr = inet_addr("192.168.1.100");
+	//adr_sender.sin_addr.s_addr = inet_addr("192.168.1.100");
 	//adr_sender.sin_addr.s_addr = inet_addr("142.104.74.69");
-	//adr_sender.sin_addr.s_addr = inet_addr("127.0.0.1");
+	adr_sender.sin_addr.s_addr = inet_addr("127.0.0.1");
 	// Create receiver address
 	memset(&adr_receiver,0,sizeof adr_receiver);
 	adr_receiver.sin_family = AF_INET;

@@ -14,7 +14,7 @@
 
 struct packet_timer
 {
-	int pckt_seqno;
+	int pckt_ackno;
 	clock_t time_sent;
 	bool running;
 	bool timedout;

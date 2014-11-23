@@ -6,11 +6,11 @@
  * Create and return new timer
  * 	It's implied that this method is called to start the timer as well
  */
-struct packet_timer* create_timer(int pckt_seqno, int time)
+struct packet_timer* create_timer(int pckt_ackno, int time)
 {
-	//printf("creating timer with seqno %d...\n",pckt_seqno);
+	//printf("creating timer with ackno %d...\n",pckt_ackno);
 	struct packet_timer* timer = (struct packet_timer*)malloc(sizeof(*timer));
-	timer->pckt_seqno = pckt_seqno;
+	timer->pckt_ackno = pckt_ackno;
 	timer->time_sent = time;
 	timer->running = true;
 	timer->timedout = false;
@@ -22,7 +22,7 @@ struct packet_timer* create_timer(int pckt_seqno, int time)
  */
 void add_timer(struct packet_timer** timer_list, struct packet_timer* timer)
 {
-	printf("Adding timer %d...\n",timer->pckt_seqno);
+	printf("Adding timer %d...\n",timer->pckt_ackno);
 	int i;
 	for(i=0; timer_list[i] != 0; i++);
 	timer_list[i] = timer;
@@ -31,16 +31,16 @@ void add_timer(struct packet_timer** timer_list, struct packet_timer* timer)
 /*
 * Stop timer to signal that the corresponding packet is acknowledged
 */
-void stop_timer(struct packet_timer** timer_list, int seqno)
+void stop_timer(struct packet_timer** timer_list, int ackno)
 {
 	struct packet_timer* timer;
-	if((timer = find_timer(timer_list, seqno)) != NULL)
+	if((timer = find_timer(timer_list, ackno)) != NULL)
 	{
 		timer->running = false;
 	}
 	else
 	{
-		printf("Could not find timer with seqno->%d to stop\n",seqno);
+		printf("Could not find timer with ackno->%d to stop\n",ackno);
 		print_runningTimers(timer_list);
 		print_stoppedTimers(timer_list);
 		exit(-1);
@@ -49,30 +49,30 @@ void stop_timer(struct packet_timer** timer_list, int seqno)
 /* Find and return timer corresponding to the packet in timer list
  * return: NULL if corresponding packet does not exist, corresponding timer otherwise
  */
-struct packet_timer* find_timer(struct packet_timer** timer_list, int seqno)
+struct packet_timer* find_timer(struct packet_timer** timer_list, int ackno)
 {
-	//printf("finding timer with seqno %d...\n",seqno);
+	//printf("finding timer with ackno %d...\n",ackno);
 	int i;
 	for(i=0; timer_list[i] != 0; i++)
 	{
-		if(seqno == timer_list[i]->pckt_seqno)
+		if(ackno == timer_list[i]->pckt_ackno)
 			return timer_list[i];
 	}
 	return NULL;
 }
 
 /*
- * Return true if the timer with seqno is running and has timed out
+ * Return true if the timer with ackno is running and has timed out
  * param timer_list: the list of timers to search for the corresponding timer in
  * param current_time: checks if timer has timed out relative to this value
  */
-bool timed_out(int seqno, struct packet_timer** timer_list, int current_time)
+bool timed_out(int ackno, struct packet_timer** timer_list, int current_time)
 {
 	struct packet_timer* timer = NULL;
 	int i;
 	for(i=0; timer_list[i] != 0; i++)
 	{
-		if(seqno == timer_list[i]->pckt_seqno)
+		if(ackno == timer_list[i]->pckt_ackno)
 		{
 			timer = timer_list[i];
 			break;
@@ -84,7 +84,7 @@ bool timed_out(int seqno, struct packet_timer** timer_list, int current_time)
 		exit(-1);
 	}
 
-	if(current_time - timer->time_sent < TIMEOUT_S &&
+	if(current_time/CLOCKS_PER_SEC - timer->time_sent/CLOCKS_PER_SEC > TIMEOUT_S &&
 			timer->running == true)
 	{
 		return true;
@@ -94,15 +94,15 @@ bool timed_out(int seqno, struct packet_timer** timer_list, int current_time)
 }
 
 /*
- * Start/restart timer with seqno. Update it if it exists, create new timer otherwise
+ * Start/restart timer with ackno. Update it if it exists, create new timer otherwise
  */
-void start_timer(int seqno, struct packet_timer** timer_list)
+void start_timer(int ackno, struct packet_timer** timer_list)
 {
 	struct packet_timer* timer;
 	// If timer already exists, update it
-	if((timer = find_timer(timer_list, seqno)) != NULL)
+	if((timer = find_timer(timer_list, ackno)) != NULL)
 	{
-		printf("Restarting timer %d\n",seqno);
+		printf("Restarting timer %d\n",ackno);
 		timer->time_sent = clock();
 		timer->running = true;
 		timer->timedout = false;
@@ -110,7 +110,7 @@ void start_timer(int seqno, struct packet_timer** timer_list)
 	// Else timer doesn't exist yet, create one and add it to timer list
 	else
 	{
-		struct packet_timer* new_timer = create_timer(seqno, clock());
+		struct packet_timer* new_timer = create_timer(ackno, clock());
 		add_timer(timer_list, new_timer);
 	}
 }
@@ -126,7 +126,8 @@ void print_runningTimers(struct packet_timer** timer_list)
 	{
 		if(timer_list[i]->running == true)
 		{
-			printf("Timer: %d\n",timer_list[i]->pckt_seqno);
+			printf("Timer: %d sent at %ld\n",timer_list[i]->pckt_ackno,
+											timer_list[i]->time_sent);
 		}
 	}
 }
@@ -142,7 +143,8 @@ void print_stoppedTimers(struct packet_timer** timer_list)
 	{
 		if(timer_list[i]->running == false)
 		{
-			printf("Timer: %d\n",timer_list[i]->pckt_seqno);
+			printf("Timer: %d sent at %ld\n",timer_list[i]->pckt_ackno,
+												timer_list[i]->time_sent);
 		}
 	}
 }

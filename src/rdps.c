@@ -186,7 +186,6 @@ void packetize(char* data, int file_length)
 		//if(i){printf("data packet %d seqno: %d, ackno: %d\n",i,data_packets[i]->header.seqno, data_packets[i]->header.ackno);}
 		i++;
 	}
-
 }
 
 /*
@@ -204,7 +203,7 @@ void initiate_transfer()
 	struct packet* SYN_pckt = create_packet(NULL, 0, SYN, first_seqno);
 	send_packet(SYN_pckt, socketfd, adr_receiver);
 	pthread_mutex_lock(&timers_mutex);
-	start_timer(SYN_pckt->header.seqno, timer_list);
+	start_timer(SYN_pckt->header.ackno, timer_list);
 	pthread_mutex_unlock(&timers_mutex);
 	// wait on SYN's ACK
 	while(1)
@@ -214,6 +213,9 @@ void initiate_transfer()
 		if(rec_pckt && rec_pckt->header.type == ACK)
 		{
 			printf("sender: SYN acknowledged\n");
+			pthread_mutex_lock(&timers_mutex);
+			stop_timer(timer_list, SYN_pckt->header.ackno);
+			pthread_mutex_unlock(&timers_mutex);
 			break;
 		}
 		if(clock()/CLOCKS_PER_SEC >= SENDER_TIMEOUT_S)
@@ -239,7 +241,7 @@ void initiate_transfer()
 			send_packet(data_packets[i], socketfd, adr_receiver);
 			// Start its timer
 			pthread_mutex_lock(&timers_mutex);
-			start_timer(data_packets[i]->header.seqno, timer_list);
+			start_timer(data_packets[i]->header.ackno, timer_list);
 			pthread_mutex_unlock(&timers_mutex);
 			// update occupied space in window
 			window.occupied += data_packets[i]->payload_length;
@@ -249,11 +251,14 @@ void initiate_transfer()
 		{
 			break;
 		}
-
 	}
 
 	while(1)
 	{
+		pthread_mutex_lock(&timers_mutex);
+		printf("attempting to print running timers\n");
+		print_runningTimers(timer_list);
+		pthread_mutex_unlock(&timers_mutex);
 		// wait for packet
 		struct sockaddr_in adr_src;
 		struct packet* rec_pckt = receive_packet(socketfd, &adr_src);
@@ -262,11 +267,29 @@ void initiate_transfer()
 		// send new data packets if window permits
 		printf("Resending timedout packets...\n");
 		resend_timedoutPackets();
-		if(allPacketsAcknowledged())
+		// check if all the data packets have been successfully acknowledged
+
+		if(allPacketsAcknowledged() == true)
 		{
+			printf("ALL PACKETS ACKNOWLEDGED\n");
 			// send FIN
+			int FIN_seqno = 69696969;
+			struct packet* FIN_pckt = create_packet(NULL, 0, FIN, FIN_seqno);
+			send_packet(FIN_pckt, socketfd, adr_receiver);
+			// Start its timer
+			pthread_mutex_lock(&timers_mutex);
+			start_timer(FIN_pckt->header.ackno, timer_list);
+			pthread_mutex_unlock(&timers_mutex);
 			// wait for FIN's ACK
+			rec_pckt = receive_packet(socketfd, &adr_src);
+			handle_packet(rec_pckt);
+			if(rec_pckt->header.seqno == FIN_pckt->header.ackno)
+			{
+				printf("FIN ACK RECEIVED\n");
+				terminate(0);
+			}
 		}
+
 		// Global timeout
 		if(clock()/CLOCKS_PER_SEC >= SENDER_TIMEOUT_S)
 		{
@@ -286,8 +309,9 @@ void* poll_timers()
 		for(i=0; timer_list[i] != 0; i++)
 		{
 			struct packet_timer* timer = timer_list[i];
-			if(timed_out(timer->pckt_seqno, timer_list, clock()))
+			if(timed_out(timer->pckt_ackno, timer_list, clock()))
 			{
+				//printf("PTHREAD: timer %d has timedout\n",timer->pckt_ackno);
 				timer->timedout = true;
 			}
 		}
@@ -306,17 +330,17 @@ void resend_timedoutPackets()
 	for(i=0; timer_list[i] != 0; i++)
 	{
 		struct packet_timer* timer = timer_list[i];
-		if(timer->timedout == true)
+		if(timer->timedout == true && timer->running == true)
 		{
 			int j;
 			for(j=0; data_packets[j] != 0; j++)
 			{
-				if(data_packets[j]->header.seqno == timer->pckt_seqno)
+				if(data_packets[j]->header.ackno == timer->pckt_ackno)
 				{
 					// resend the data packet
 					send_packet(data_packets[i], socketfd, adr_receiver);
 					// restart its timer
-					start_timer(data_packets[i]->header.seqno, timer_list);
+					start_timer(data_packets[i]->header.ackno, timer_list);
 				}
 			}
 		}
@@ -329,11 +353,27 @@ void resend_timedoutPackets()
  */
 bool allPacketsAcknowledged()
 {
+	pthread_mutex_lock(&timers_mutex);
+	bool retval = true;
+	printf("Checking if all data packets ACK'd...\n");
 	// for every data packet
-		// if it has been ACK'd
-			// continue
-		// else return false
-	// return true
+	int i;
+	for(i=0; data_packets[i] != 0; i++)
+	{
+		struct packet_timer* timer = find_timer(timer_list, data_packets[i]->header.ackno);
+		if(timer != NULL)
+		{
+			// if its corresponding timer is no longer running
+			if(timer->running == true)
+			{
+				printf("Timer %d is still running\n",timer->pckt_ackno);
+				retval =  false;
+				break;
+			}
+		}
+	}
+	pthread_mutex_unlock(&timers_mutex);
+	return retval;
 }
 /*
  * Handle packets from the receiver

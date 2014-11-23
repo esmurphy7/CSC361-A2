@@ -6,6 +6,7 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <string.h>
+#include <time.h>
 
 // Window size (1024*1024 = 1048576 bytes for 1mb file)
 #define WINDOW_SIZE 1024*10

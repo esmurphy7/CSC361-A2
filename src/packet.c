@@ -97,13 +97,19 @@ void send_packet(struct packet* pckt, int socketfd, struct sockaddr_in adr_dest)
 		perror("sendto()\n");
 		exit(-1);
 	}
+	/*
 	printf("sent %s packet seqno->%d, ackno->%d to %s:%d\n",
 											type_itos(pckt->header.type),
 											pckt->header.seqno,
 											pckt->header.ackno,
 											inet_ntoa(adr_dest.sin_addr),
 											ntohs(adr_dest.sin_port));
-
+	*/
+	printf("sent %s packet seqno->%d, ackno->%d at %lu\n",
+												type_itos(pckt->header.type),
+												pckt->header.seqno,
+												pckt->header.ackno,
+												clock());
 	//if(pckt->header.seqno){printf("sent string: %s\n", buffer);}
 	free(buffer);
 }
