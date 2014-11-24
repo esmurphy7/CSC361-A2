@@ -1,6 +1,15 @@
 #include "packet.h"
 #include "timer.h"
 
+#define KNRM  "\x1B[0m"
+#define KRED  "\x1B[31m"
+#define KGRN  "\x1B[32m"
+#define KYEL  "\x1B[33m"
+#define KBLU  "\x1B[34m"
+#define KMAG  "\x1B[35m"
+#define KCYN  "\x1B[36m"
+#define KWHT  "\x1B[37m"
+
 // ============== Prototypes =============
 void setup_connection(char*, int);
 bool DATisUnique(struct packet*);
@@ -148,9 +157,9 @@ void setup_connection(char* receiver_ip, int receiver_port)
 	adr_sender.sin_family = AF_INET;
 	//adr_sender.sin_port = htons(8080);
 	adr_sender.sin_port = htons(6969);
-	adr_sender.sin_addr.s_addr = inet_addr("192.168.1.100");
+	//adr_sender.sin_addr.s_addr = inet_addr("192.168.1.100");
 	//adr_sender.sin_addr.s_addr = inet_addr("142.104.74.69");
-	//adr_sender.sin_addr.s_addr = inet_addr("127.0.0.1");
+	adr_sender.sin_addr.s_addr = inet_addr("127.0.0.1");
 	// Create receiver address
 	memset(&adr_receiver,0,sizeof adr_receiver);
 	adr_receiver.sin_family = AF_INET;
@@ -238,19 +247,27 @@ void print_log(bool sent, bool unique, int typeno, int no, int length)
 	sprintf(payloadwindow, "%d", length);
 	if(sent)
 	{
+		sprintf(event_type, "%s", KGRN);
 		if(unique)
-			strcpy(event_type, "s");
+		{
+			strcat(event_type, "s");
+		}
 		else
-			strcpy(event_type, "S");
+		{
+			strcat(event_type, "S");
+		}
+		strcat(event_type, KNRM);
 		source_adr = get_adrString(adr_sender.sin_addr, adr_sender.sin_port);
 		dest_adr = get_adrString(adr_receiver.sin_addr, adr_receiver.sin_port);
 	}
 	else
 	{
+		sprintf(event_type, "%s", KCYN);
 		if(unique)
-			strcpy(event_type, "r");
+			strcat(event_type, "r");
 		else
-			strcpy(event_type, "R");
+			strcat(event_type, "R");
+		strcat(event_type, KNRM);
 		dest_adr = get_adrString(adr_sender.sin_addr, adr_sender.sin_port);
 		source_adr = get_adrString(adr_receiver.sin_addr, adr_receiver.sin_port);
 	}

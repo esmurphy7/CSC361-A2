@@ -8,6 +8,15 @@
 #include "packet.h"
 #include "timer.h"
 
+#define KNRM  "\x1B[0m"
+#define KRED  "\x1B[31m"
+#define KGRN  "\x1B[32m"
+#define KYEL  "\x1B[33m"
+#define KBLU  "\x1B[34m"
+#define KMAG  "\x1B[35m"
+#define KCYN  "\x1B[36m"
+#define KWHT  "\x1B[37m"
+
 // ============== Prototypes =============
 void setup_connection(char*,int,char*,int);
 void packetize(char*, int, int);
@@ -144,8 +153,8 @@ void setup_connection(char* sender_ip, int sender_port, char* receiver_ip, int r
 	}
 	// Set timeout value for the recvfrom
 	struct timeval tv;
-	tv.tv_sec = 0;
-	tv.tv_usec = 100000; // 1sec = 1,000,000 microseconds. 10th of a second
+	tv.tv_sec = 1;
+	tv.tv_usec = 500000; // 1sec = 1,000,000 microseconds. half of a second
 	if (setsockopt(socketfd, SOL_SOCKET, SO_RCVTIMEO,&tv,sizeof(tv)) < 0)
 	{
 	    perror("setsockopt():");
@@ -602,19 +611,27 @@ void print_log(bool sent, bool unique, int typeno, int no, int length)
 	sprintf(payloadwindow, "%d", length);
 	if(sent)
 	{
+		sprintf(event_type, "%s", KGRN);
 		if(unique)
-			strcpy(event_type, "s");
+		{
+			strcat(event_type, "s");
+		}
 		else
-			strcpy(event_type, "S");
+		{
+			strcat(event_type, "S");
+		}
+		strcat(event_type, KNRM);
 		source_adr = get_adrString(adr_sender.sin_addr, adr_sender.sin_port);
 		dest_adr = get_adrString(adr_receiver.sin_addr, adr_receiver.sin_port);
 	}
 	else
 	{
+		sprintf(event_type, "%s", KCYN);
 		if(unique)
-			strcpy(event_type, "r");
+			strcat(event_type, "r");
 		else
-			strcpy(event_type, "R");
+			strcat(event_type, "R");
+		strcat(event_type, KNRM);
 		dest_adr = get_adrString(adr_sender.sin_addr, adr_sender.sin_port);
 		source_adr = get_adrString(adr_receiver.sin_addr, adr_receiver.sin_port);
 	}
