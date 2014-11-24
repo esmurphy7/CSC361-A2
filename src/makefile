@@ -14,4 +14,4 @@ source: rdps.c rdpr.c timer.c packet.c
 	$(CC) $(CFLAGS) rdps.c rdpr.c timer.c packet.c
 	
 clean:
-	rm *.o rdps
+	rm *.o rdps rdpr

@@ -79,7 +79,7 @@ int main(int argc, char* argv[])
 				add_packet(rec_pckt, data_packets);
 				struct packet* ACK_pckt = create_packet(NULL, 0, ACK, rec_pckt->header.ackno);
 				send_packet(ACK_pckt, socketfd, adr_src);
-				print_log(true, false, ACK, rec_pckt->header.seqno, rec_pckt->payload_length);
+				print_log(true, false, ACK, rec_pckt->header.seqno, 0);
 				// update statistics
 				ACK_packets_sent++;
 				DAT_bytes_received += rec_pckt->payload_length;
@@ -97,7 +97,7 @@ int main(int argc, char* argv[])
 				// Send ACK
 				struct packet* ACK_pckt = create_packet(NULL, 0, ACK, rec_pckt->header.ackno);
 				send_packet(ACK_pckt, socketfd, adr_src);
-				print_log(true, false, ACK, rec_pckt->header.seqno, rec_pckt->payload_length);
+				print_log(true, false, ACK, rec_pckt->header.seqno, 0);
 				// update statistics
 				SYN_packets_received++;
 				ACK_packets_sent++;
@@ -113,7 +113,7 @@ int main(int argc, char* argv[])
 				//send ACK and break to begin writing to file
 				struct packet* ACK_pckt = create_packet(NULL, 0, ACK, rec_pckt->header.ackno);
 				send_packet(ACK_pckt, socketfd, adr_src);
-				print_log(true, false, ACK, rec_pckt->header.seqno, rec_pckt->payload_length);
+				print_log(true, false, ACK, rec_pckt->header.seqno, 0);
 				// update statistics
 				FIN_packets_received++;
 				ACK_packets_sent++;
@@ -156,10 +156,10 @@ void setup_connection(char* receiver_ip, int receiver_port)
 	memset(&adr_sender,0,sizeof adr_sender);
 	adr_sender.sin_family = AF_INET;
 	//adr_sender.sin_port = htons(8080);
-	adr_sender.sin_port = htons(6969);
-	//adr_sender.sin_addr.s_addr = inet_addr("192.168.1.100");
+	adr_sender.sin_port = htons(2699);
+	adr_sender.sin_addr.s_addr = inet_addr("192.168.1.100");
 	//adr_sender.sin_addr.s_addr = inet_addr("142.104.74.69");
-	adr_sender.sin_addr.s_addr = inet_addr("127.0.0.1");
+	//adr_sender.sin_addr.s_addr = inet_addr("127.0.0.1");
 	// Create receiver address
 	memset(&adr_receiver,0,sizeof adr_receiver);
 	adr_receiver.sin_family = AF_INET;
