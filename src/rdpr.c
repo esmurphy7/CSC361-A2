@@ -46,7 +46,7 @@ int main(int argc, char* argv[])
 		struct sockaddr_in adr_src;
 		struct packet* rec_pckt = receive_packet(socketfd, &adr_src);
 		
-		if(rec_pckt)
+		if(rec_pckt != NULL)
 		{
 			if(rec_pckt->header.type == DAT)
 			{
@@ -98,13 +98,22 @@ void setup_connection(char* receiver_ip, int receiver_port)
 		perror("receiver: socket()\n");
 		exit(-1);
 	}
+	// Set timeout value for the recvfrom
+	struct timeval tv;
+	tv.tv_sec = 2;
+	tv.tv_usec = 0;
+	if (setsockopt(socketfd, SOL_SOCKET, SO_RCVTIMEO,&tv,sizeof(tv)) < 0)
+	{
+		perror("setsockopt():");
+		exit(-1);
+	}
 	// Create sender address
 	memset(&adr_sender,0,sizeof adr_sender);
 	adr_sender.sin_family = AF_INET;
 	adr_sender.sin_port = htons(8080);
-	//adr_sender.sin_addr.s_addr = inet_addr("192.168.1.100");
+	adr_sender.sin_addr.s_addr = inet_addr("192.168.1.100");
 	//adr_sender.sin_addr.s_addr = inet_addr("142.104.74.69");
-	adr_sender.sin_addr.s_addr = inet_addr("127.0.0.1");
+	//adr_sender.sin_addr.s_addr = inet_addr("127.0.0.1");
 	// Create receiver address
 	memset(&adr_receiver,0,sizeof adr_receiver);
 	adr_receiver.sin_family = AF_INET;
@@ -158,7 +167,7 @@ void write_file(char* filename)
 	{
 		fwrite(data_packets[i]->payload, 1, sizeof(data_packets[i]->payload), file);
 	}
-	printf("done writing data to file\n");
+	printf("DONE WRITING TO FILE: %s\n",filename);
 	fclose(file);
 }
 /*

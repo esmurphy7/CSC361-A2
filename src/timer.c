@@ -6,7 +6,7 @@
  * Create and return new timer
  * 	It's implied that this method is called to start the timer as well
  */
-struct packet_timer* create_timer(int pckt_ackno, int time)
+struct packet_timer* create_timer(int pckt_ackno, clock_t time)
 {
 	//printf("creating timer with ackno %d...\n",pckt_ackno);
 	struct packet_timer* timer = (struct packet_timer*)malloc(sizeof(*timer));
@@ -22,7 +22,7 @@ struct packet_timer* create_timer(int pckt_ackno, int time)
  */
 void add_timer(struct packet_timer** timer_list, struct packet_timer* timer)
 {
-	printf("Adding timer %d...\n",timer->pckt_ackno);
+	//printf("Adding timer %d...\n",timer->pckt_ackno);
 	int i;
 	for(i=0; timer_list[i] != 0; i++);
 	timer_list[i] = timer;
@@ -66,12 +66,14 @@ struct packet_timer* find_timer(struct packet_timer** timer_list, int ackno)
  * param timer_list: the list of timers to search for the corresponding timer in
  * param current_time: checks if timer has timed out relative to this value
  */
-bool timed_out(int ackno, struct packet_timer** timer_list, int current_time)
+bool timed_out(int ackno, struct packet_timer** timer_list, clock_t current_time)
 {
 	struct packet_timer* timer = NULL;
+	// for each timer
 	int i;
 	for(i=0; timer_list[i] != 0; i++)
 	{
+		// found the desired timer
 		if(ackno == timer_list[i]->pckt_ackno)
 		{
 			timer = timer_list[i];
@@ -80,13 +82,23 @@ bool timed_out(int ackno, struct packet_timer** timer_list, int current_time)
 	}
 	if(timer == NULL)
 	{
-		perror("could not find corresponding timer\n");
+		printf("could not find if timer %d has timed out\n",timer->pckt_ackno);
 		exit(-1);
 	}
-
-	if(current_time/CLOCKS_PER_SEC - timer->time_sent/CLOCKS_PER_SEC > TIMEOUT_S &&
+	clock_t cur_time = current_time;
+	clock_t timeout_val = TIMEOUT_US/100;
+	clock_t time_sent = timer->time_sent;
+	/*
+	printf("Current time: %ld, Timeout Value: %ld\nTimer: %d\n time_sent->%ld\n",
+				cur_time,
+				timeout_val,
+				timer->pckt_ackno,
+				time_sent);
+				*/
+	if(cur_time - time_sent > timeout_val &&
 			timer->running == true)
 	{
+		printf("Timer %d has timed out\n",timer->pckt_ackno);
 		return true;
 	}
 	else

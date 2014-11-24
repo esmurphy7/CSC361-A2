@@ -4,8 +4,8 @@
 
 
 // Packet timeout value in seconds and microseconds respectively
-#define TIMEOUT_S 5
-#define TIMEOUT_US 5000000
+#define TIMEOUT_S 1
+#define TIMEOUT_US 1000000
 // Max number of timers
 #define MAX_TIMERS 10000
 // Sender and receiver ultimate time out
@@ -20,11 +20,11 @@ struct packet_timer
 	bool timedout;
 };
 
-struct packet_timer* create_timer(int, int);
+struct packet_timer* create_timer(int, clock_t);
 void add_timer(struct packet_timer**, struct packet_timer*);
 void stop_timer(struct packet_timer**, int);
 struct packet_timer* find_timer(struct packet_timer**, int);
-bool timed_out(int, struct packet_timer**, int);
+bool timed_out(int, struct packet_timer**, clock_t);
 void start_timer(int, struct packet_timer**);
 void print_runningTimers(struct packet_timer**);
 void print_stoppedTimers(struct packet_timer**);

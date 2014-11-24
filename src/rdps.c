@@ -120,6 +120,15 @@ void setup_connection(char* sender_ip, int sender_port, char* receiver_ip, int r
 		perror("sender: socket()\n");
 		exit(-1);
 	}
+	// Set timeout value for the recvfrom
+	struct timeval tv;
+	tv.tv_sec = 2;
+	tv.tv_usec = 0;
+	if (setsockopt(socketfd, SOL_SOCKET, SO_RCVTIMEO,&tv,sizeof(tv)) < 0)
+	{
+	    perror("setsockopt():");
+	    exit(-1);
+	}
 	// Create sender address
 	memset(&adr_sender,0,sizeof adr_sender);
 	adr_sender.sin_family = AF_INET;
@@ -247,9 +256,9 @@ void initiate_transfer(int last_ackno)
 	window->base_seqno = data_packets[0]->header.seqno;
 
 	// Send initial wave of data packets to fill the window
-	printf("sender: initial wave of data...\n");
+	//printf("sender: initial wave of data...\n");
 	fill_window(window);
-	printf("Window:\n size->%d\n base_seqno->%d\n occupied->%d\n",window->size,window->base_seqno,window->occupied);
+	//printf("Window:\n size->%d\n base_seqno->%d\n occupied->%d\n",window->size,window->base_seqno,window->occupied);
 
 	// Receive ACKs, send data to fill the window, and check for timeouts
 	while(1)
@@ -259,17 +268,20 @@ void initiate_transfer(int last_ackno)
 		pthread_mutex_unlock(&timers_mutex);
 		// wait for packet
 		struct sockaddr_in adr_src;
-		struct packet* rec_pckt = receive_packet(socketfd, &adr_src);
-		// handle received ACKs
-		handle_packet(rec_pckt);
+		struct packet* rec_pckt;
+		if((rec_pckt = receive_packet(socketfd, &adr_src)) != NULL)
+		{
+			// handle received ACKs
+			handle_packet(rec_pckt);
+		}
 		// Update the window's base_seqno as ACKs are received
-		printf("Updating window...\n");
+		//printf("Updating window...\n");
 		update_windowBase(window);
 		/* send new data packets if window permits */
-		printf("Filling window...\n");
+		//printf("Filling window...\n");
 		fill_window(window);
 
-		printf("Resending timedout packets...\n");
+		//printf("Resending timedout packets...\n");
 		resend_timedoutPackets();
 		// check if all the data packets have been successfully acknowledged
 
@@ -287,12 +299,14 @@ void initiate_transfer(int last_ackno)
 			start_timer(FIN_timer->pckt_ackno, timer_list);
 			pthread_mutex_unlock(&timers_mutex);
 			// wait for FIN's ACK
-			rec_pckt = receive_packet(socketfd, &adr_src);
-			handle_packet(rec_pckt);
-			if(rec_pckt->header.seqno == FIN_pckt->header.ackno)
+			if((rec_pckt = receive_packet(socketfd, &adr_src)) != NULL)
 			{
-				printf("FIN ACK RECEIVED\n");
-				terminate(0);
+				handle_packet(rec_pckt);
+				if(rec_pckt->header.seqno == FIN_pckt->header.ackno)
+				{
+					printf("FIN ACK RECEIVED\n");
+					terminate(0);
+				}
 			}
 		}
 
@@ -317,9 +331,10 @@ void* poll_timers()
 		for(i=0; timer_list[i] != 0; i++)
 		{
 			struct packet_timer* timer = timer_list[i];
+			//printf("PTHREAD: checking if timer %d has timed out with current time: %ld \n",timer->pckt_ackno, clock());
 			if(timed_out(timer->pckt_ackno, timer_list, clock()))
 			{
-				//printf("PTHREAD: timer %d has timedout\n",timer->pckt_ackno);
+				printf("PTHREAD: timer %d has timedout\n",timer->pckt_ackno);
 				timer->timedout = true;
 			}
 		}
@@ -381,14 +396,14 @@ void update_windowBase(struct window* window)
 			// if it has been ACK'd
 			if(packetACKd(data_packets[i]))
 			{
-				printf("packet is ACK'd\n");
+				//printf("packet is ACK'd\n");
 				// move window base up to next packet's seqno
 				// update the amount of space required
 				if(data_packets[i+1] != 0)
 				{
 					window->base_seqno = data_packets[i+1]->header.seqno;
 					window->occupied -= data_packets[i+1]->payload_length;
-					printf("Window:\n size->%d\n base_seqno->%d\n occupied->%d\n",window->size,window->base_seqno,window->occupied);
+					//printf("Window:\n size->%d\n base_seqno->%d\n occupied->%d\n",window->size,window->base_seqno,window->occupied);
 				}
 			}
 		}

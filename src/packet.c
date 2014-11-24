@@ -120,7 +120,6 @@ void send_packet(struct packet* pckt, int socketfd, struct sockaddr_in adr_dest)
  */
 struct packet* receive_packet(int socketfd, struct sockaddr_in* adr_src)
 {
-	int buffer_size = 1056;
 	char* buffer = (char*)malloc(sizeof(char*)*PACKET_SIZE);
 	// When a packet is received, store its corresponding source address in adr_src
 	if(!adr_src)
@@ -139,7 +138,7 @@ struct packet* receive_packet(int socketfd, struct sockaddr_in* adr_src)
 					&src_len) < 0)
 	{
 		perror("recvfrom()\n");
-		exit(-1);
+		//exit(-1);
 	}
 	//printf("packet received from %s:%d\n",inet_ntoa(adr_src->sin_addr), ntohs(adr_src->sin_port));
 	//printf("raw message received - %s\n",buffer);
