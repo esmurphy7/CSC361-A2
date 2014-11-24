@@ -6,6 +6,8 @@ void setup_connection(char*, int);
 bool DATisUnique(struct packet*);
 void store_dataPacket(struct packet*);
 void write_file(char*);
+void print_log(bool, bool, int, int, int);
+char* get_adrString(struct in_addr, in_port_t);
 void print_statistics();
 void terminate(int);
 // =============== Globals ===============
@@ -56,16 +58,19 @@ int main(int argc, char* argv[])
 	{
 		// Receive incoming packets
 		struct sockaddr_in adr_src;
+		//printf("receiving...\n");
 		struct packet* rec_pckt = receive_packet(socketfd, &adr_src);
 		
 		if(rec_pckt != NULL)
 		{
 			if(rec_pckt->header.type == DAT)
 			{
+				//printf("received DAT\n");
 				// Send ACK
 				add_packet(rec_pckt, data_packets);
 				struct packet* ACK_pckt = create_packet(NULL, 0, ACK, rec_pckt->header.ackno);
 				send_packet(ACK_pckt, socketfd, adr_src);
+				print_log(true, false, ACK, rec_pckt->header.seqno, rec_pckt->payload_length);
 				// update statistics
 				ACK_packets_sent++;
 				DAT_bytes_received += rec_pckt->payload_length;
@@ -83,6 +88,7 @@ int main(int argc, char* argv[])
 				// Send ACK
 				struct packet* ACK_pckt = create_packet(NULL, 0, ACK, rec_pckt->header.ackno);
 				send_packet(ACK_pckt, socketfd, adr_src);
+				print_log(true, false, ACK, rec_pckt->header.seqno, rec_pckt->payload_length);
 				// update statistics
 				SYN_packets_received++;
 				ACK_packets_sent++;
@@ -98,6 +104,7 @@ int main(int argc, char* argv[])
 				//send ACK and break to begin writing to file
 				struct packet* ACK_pckt = create_packet(NULL, 0, ACK, rec_pckt->header.ackno);
 				send_packet(ACK_pckt, socketfd, adr_src);
+				print_log(true, false, ACK, rec_pckt->header.seqno, rec_pckt->payload_length);
 				// update statistics
 				FIN_packets_received++;
 				ACK_packets_sent++;
@@ -107,7 +114,7 @@ int main(int argc, char* argv[])
 			{
 				terminate(-2);
 			}
-
+			print_log(false, false, rec_pckt->header.type, rec_pckt->header.seqno, rec_pckt->payload_length);
 		}
 	}
 	// should have all data packets stored
@@ -212,6 +219,83 @@ void write_file(char* filename)
 	}
 	printf("DONE WRITING TO FILE: %s\n",filename);
 	fclose(file);
+}
+/*
+ * Real-time log as packets are sent and received
+ */
+void print_log(bool sent, bool unique, int typeno, int no, int length)
+{
+	char* type = type_itos(typeno);
+	char* source_adr;
+	char* dest_adr;
+	char* current_time = (char*)malloc(sizeof(current_time)*100);
+	char* event_type = (char*)malloc(sizeof(event_type)*10);
+	char* seqackno = (char*)malloc(sizeof(seqackno)*10);
+	char* payloadwindow = (char*)malloc(sizeof(payloadwindow)*10);
+	char* full_log = (char*)malloc(sizeof(full_log)*200);
+
+	sprintf(seqackno, "%d", no);
+	sprintf(payloadwindow, "%d", length);
+	if(sent)
+	{
+		if(unique)
+			strcpy(event_type, "s");
+		else
+			strcpy(event_type, "S");
+		source_adr = get_adrString(adr_sender.sin_addr, adr_sender.sin_port);
+		dest_adr = get_adrString(adr_receiver.sin_addr, adr_receiver.sin_port);
+	}
+	else
+	{
+		if(unique)
+			strcpy(event_type, "r");
+		else
+			strcpy(event_type, "R");
+		dest_adr = get_adrString(adr_sender.sin_addr, adr_sender.sin_port);
+		source_adr = get_adrString(adr_receiver.sin_addr, adr_receiver.sin_port);
+	}
+	time_t rawtime;
+	struct tm * timeinfo;
+	time ( &rawtime );
+	timeinfo = localtime ( &rawtime );
+	current_time = asctime (timeinfo);
+	// stip newline from current time
+	int i;
+	for(i=0; current_time[i] != '\0'; i++)
+	{
+		if(current_time[i] == '\n')
+			current_time[i] = '\0';
+	}
+	//printf ( "Current local time and date: %s\n", current_time );
+	// cat them all together
+	char space[2] = " ";
+	strcpy(full_log, current_time);
+	strcat(full_log, space);
+	strcat(full_log, event_type);
+	strcat(full_log, space);
+	strcat(full_log, source_adr);
+	strcat(full_log, space);
+	strcat(full_log, dest_adr);
+	strcat(full_log, space);
+	strcat(full_log, type);
+	strcat(full_log, space);
+	strcat(full_log, seqackno);
+	strcat(full_log, space);
+	strcat(full_log, payloadwindow);
+	printf("%s\n",full_log);
+}
+/*
+ * Construct and return an address string for the sake of logging
+ */
+char* get_adrString(struct in_addr adrIp, in_port_t adrPort)
+{
+	char* ip = inet_ntoa(adrIp);
+	int pt = ntohs(adrPort);
+	char* strport = (char*)malloc(sizeof(strport)*10);
+	sprintf(strport, "%d", pt);
+	strcat(ip, ":");
+	strcat(ip, strport);
+	return ip;
 }
 /*
  * Log receiver statistics

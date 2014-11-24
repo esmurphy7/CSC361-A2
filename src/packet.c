@@ -103,11 +103,12 @@ void send_packet(struct packet* pckt, int socketfd, struct sockaddr_in adr_dest)
 											inet_ntoa(adr_dest.sin_addr),
 											ntohs(adr_dest.sin_port));
 	*/
-	printf("sent %s packet seqno->%d, ackno->%d at %lu\n",
+	/*printf("sent %s packet seqno->%d, ackno->%d at %lu\n",
 												type_itos(pckt->header.type),
 												pckt->header.seqno,
 												pckt->header.ackno,
 												clock());
+												*/
 	free(buffer);
 }
 
@@ -124,7 +125,7 @@ struct packet* receive_packet(int socketfd, struct sockaddr_in* adr_src)
 		adr_src = (struct sockaddr_in*)malloc(sizeof(struct sockaddr_in*));
 	}
 	socklen_t src_len = sizeof(adr_src);
-	printf("\nwaiting for packet...\n");
+	//printf("\nwaiting for packet...\n");
 	// Receive incoming packet
 	if(recvfrom(socketfd,
 					buffer,
@@ -133,7 +134,7 @@ struct packet* receive_packet(int socketfd, struct sockaddr_in* adr_src)
 					(struct sockaddr*)adr_src,
 					&src_len) < 0)
 	{
-		perror("recvfrom()\n");
+		//perror("recvfrom()\n");
 		//exit(-1);
 	}
 	//printf("packet received from %s:%d\n",inet_ntoa(adr_src->sin_addr), ntohs(adr_src->sin_port));
@@ -142,7 +143,7 @@ struct packet* receive_packet(int socketfd, struct sockaddr_in* adr_src)
 	// Assert that the packet has the magic header field
 	if(strcmp(rec_pckt->header.magic, MAGIC_HDR) == 0)
 	{
-		printf("received %s packet %d\n", type_itos(rec_pckt->header.type), rec_pckt->header.seqno);
+		//printf("received %s packet %d\n", type_itos(rec_pckt->header.type), rec_pckt->header.seqno);
 		switch(rec_pckt->header.type)
 		{
 			case DAT:
@@ -163,7 +164,7 @@ struct packet* receive_packet(int socketfd, struct sockaddr_in* adr_src)
 	}
 	else
 	{
-		printf("packet received is not RUDP packet, returning NULL...\n");
+		//printf("packet received is not RUDP packet, returning NULL...\n");
 		// Ignore non-RUDP packets
 		return NULL;
 	}

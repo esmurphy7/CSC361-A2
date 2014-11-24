@@ -1,18 +1,4 @@
-/* TODO: 	Synchronize sending the initial wave of packets and receiving their ACKs.
- * 		Trim the very last packet of the file of excess null memory
- * 		Init first_seqno to random number
- * 		Change max payload size from 1024 to 1024-header_size
- */
 /*
- * QUESTIONS:
- * 			- After how many seconds of no and/or garbage response do we terminate and/or resend packets?
- * 			- What exactly defines a packet with errors? How can my sender/receiver identify a packet as having errors?
- * 			- How should my sender/receiver handle packets with errors? Discard them? Attempt to fix them?
- * 			- Does a RST packet mean terminate?
- * 			- How to choose a window size and packet size?
- * 			- Why random seqno?
- * 			- Need to transfer different types of files? How does this affect the way I store packet payload (char*)?
- * 			- Anyway to connect to “WAN” interface (10.10.1.100) and “LAN” interfaces (192.168.1.100) remotely?
  	 ROUTER: ssh csc361@192.168.1.1, ecs360
  */
 #include <sys/file.h>
@@ -33,6 +19,8 @@ void update_windowBase(struct window*);
 void resend_timedoutPackets();
 bool packetACKd(struct packet*);
 bool allPacketsAcknowledged();
+void print_log(bool, bool, int, int, int);
+char* get_adrString(struct in_addr, in_port_t);
 void print_statistics();
 void terminate(int);
 // =============== Globals ===============
@@ -203,7 +191,7 @@ void packetize(char* data, int file_length, int payload_size)
 	current_byte = 0;
 	bytes_read = 0;
 	pckt_data = (char*)malloc(sizeof(pckt_data)*payload_size);
-	printf("Reading file...\n");
+	//printf("Reading file...\n");
 	while(current_byte < file_length)
 	{
 		pckt_data[bytes_read] = data[current_byte];
@@ -226,7 +214,7 @@ void packetize(char* data, int file_length, int payload_size)
 	struct packet* pckt = create_packet(pckt_data, bytes_read, DAT, current_byte);
 	add_packet(pckt, data_packets);
 
-	printf("sender: end of file\n");
+	//printf("sender: end of file\n");
 	// Debug: print list of data packets
 	int i = 0;
 	while(data_packets[i] != 0)
@@ -249,7 +237,7 @@ void initiate_transfer(int last_ackno)
 	pthread_create(&pthread, NULL, poll_timers, NULL);
 
 	// Create and add all DAT timers, don't start them until they're sent
-	printf("Creating and adding DAT timers...\n");
+	//printf("Creating and adding DAT timers...\n");
 	pthread_mutex_lock(&timers_mutex);
 	int j;
 	for(j=0; data_packets[j] != 0; j++)
@@ -262,21 +250,23 @@ void initiate_transfer(int last_ackno)
 	pthread_mutex_unlock(&timers_mutex);
 
 	// send SYN
-	printf("creating SYN packet...\n");
+	//printf("creating SYN packet...\n");
 	struct packet* SYN_pckt = create_packet(NULL, 0, SYN, first_seqno);
-	printf("created SYN packet\n");
+	//printf("created SYN packet\n");
 	// update statistics
 	send_packet(SYN_pckt, socketfd, adr_receiver);
+	// sent, unique, SYN, seqno, length)
+	print_log(true, true, SYN, SYN_pckt->header.seqno, SYN_pckt->payload_length);
 	bytes_sent += SYN_pckt->payload_length;
 	unique_bytes_sent += SYN_pckt->payload_length;
 	SYN_packets_sent++;
 	// start SYN's timer
 	pthread_mutex_lock(&timers_mutex);
-	printf("Creating SYN timer...\n");
+	//printf("Creating SYN timer...\n");
 	struct packet_timer* SYN_timer = create_timer(SYN_pckt->header.ackno, clock());
 	add_timer(timer_list, SYN_timer);
 	start_timer(SYN_pckt->header.ackno, timer_list);
-	printf("Created, added, and started SYN timer\n");
+	//printf("Created, added, and started SYN timer\n");
 	pthread_mutex_unlock(&timers_mutex);
 	// wait on SYN's ACK
 	while(1)
@@ -285,6 +275,7 @@ void initiate_transfer(int last_ackno)
 		struct packet* rec_pckt = receive_packet(socketfd, &adr_src);
 		if(rec_pckt && rec_pckt->header.type == ACK)
 		{
+			print_log(false, true, ACK, rec_pckt->header.seqno, rec_pckt->payload_length);
 			// update statistics
 			ACK_packets_received++;
 			printf("sender: SYN acknowledged\n");
@@ -295,6 +286,7 @@ void initiate_transfer(int last_ackno)
 		}
 		// resend the SYN packet
 		send_packet(SYN_pckt, socketfd, adr_receiver);
+		print_log(true, false, SYN, SYN_pckt->header.seqno, SYN_pckt->payload_length);
 		// update statistics
 		bytes_sent += SYN_pckt->payload_length;
 		SYN_packets_sent++;
@@ -327,6 +319,7 @@ void initiate_transfer(int last_ackno)
 		struct packet* rec_pckt;
 		if((rec_pckt = receive_packet(socketfd, &adr_src)) != NULL)
 		{
+			print_log(false, true, ACK, rec_pckt->header.seqno, rec_pckt->payload_length);
 			// handle received ACKs
 			handle_packet(rec_pckt);
 		}
@@ -348,6 +341,7 @@ void initiate_transfer(int last_ackno)
 			int FIN_seqno = last_ackno;
 			struct packet* FIN_pckt = create_packet(NULL, 0, FIN, FIN_seqno);
 			send_packet(FIN_pckt, socketfd, adr_receiver);
+			print_log(true, true, FIN, FIN_pckt->header.seqno, FIN_pckt->payload_length);
 			// Update statistics
 			bytes_sent += FIN_pckt->payload_length;
 			unique_bytes_sent += FIN_pckt->payload_length;
@@ -361,6 +355,7 @@ void initiate_transfer(int last_ackno)
 			// wait for FIN's ACK
 			if((rec_pckt = receive_packet(socketfd, &adr_src)) != NULL)
 			{
+				print_log(false, true, ACK, rec_pckt->header.seqno, rec_pckt->payload_length);
 				handle_packet(rec_pckt);
 				if(rec_pckt->header.seqno == FIN_pckt->header.ackno)
 				{
@@ -433,6 +428,7 @@ void fill_window(struct window* window)
 				{
 					// send the data packet
 					send_packet(data_packets[i], socketfd, adr_receiver);
+					print_log(true, true, DAT, data_packets[i]->header.seqno, data_packets[i]->payload_length);
 					// update statistics
 					bytes_sent += data_packets[i]->payload_length;
 					unique_bytes_sent += data_packets[i]->payload_length;
@@ -503,6 +499,7 @@ void resend_timedoutPackets()
 				{
 					// resend the data packet
 					send_packet(data_packets[i], socketfd, adr_receiver);
+					print_log(true, false, DAT, data_packets[j]->header.seqno, data_packets[i]->payload_length);
 					// update statistics
 					bytes_sent += data_packets[i]->payload_length;
 					DAT_packets_sent++;
@@ -586,6 +583,83 @@ void handle_packet(struct packet* pckt)
 		default:
 			break;
 	}
+}
+/*
+ * Real-time log as packets are sent and received
+ */
+void print_log(bool sent, bool unique, int typeno, int no, int length)
+{
+	char* type = type_itos(typeno);
+	char* source_adr;
+	char* dest_adr;
+	char* current_time = (char*)malloc(sizeof(current_time)*100);
+	char* event_type = (char*)malloc(sizeof(event_type)*10);
+	char* seqackno = (char*)malloc(sizeof(seqackno)*10);
+	char* payloadwindow = (char*)malloc(sizeof(payloadwindow)*10);
+	char* full_log = (char*)malloc(sizeof(full_log)*200);
+
+	sprintf(seqackno, "%d", no);
+	sprintf(payloadwindow, "%d", length);
+	if(sent)
+	{
+		if(unique)
+			strcpy(event_type, "s");
+		else
+			strcpy(event_type, "S");
+		source_adr = get_adrString(adr_sender.sin_addr, adr_sender.sin_port);
+		dest_adr = get_adrString(adr_receiver.sin_addr, adr_receiver.sin_port);
+	}
+	else
+	{
+		if(unique)
+			strcpy(event_type, "r");
+		else
+			strcpy(event_type, "R");
+		dest_adr = get_adrString(adr_sender.sin_addr, adr_sender.sin_port);
+		source_adr = get_adrString(adr_receiver.sin_addr, adr_receiver.sin_port);
+	}
+	time_t rawtime;
+	struct tm * timeinfo;
+	time ( &rawtime );
+	timeinfo = localtime ( &rawtime );
+	current_time = asctime (timeinfo);
+	// stip newline from current time
+	int i;
+	for(i=0; current_time[i] != '\0'; i++)
+	{
+		if(current_time[i] == '\n')
+			current_time[i] = '\0';
+	}
+	//printf ( "Current local time and date: %s\n", current_time );
+	// cat them all together
+	char space[2] = " ";
+	strcpy(full_log, current_time);
+	strcat(full_log, space);
+	strcat(full_log, event_type);
+	strcat(full_log, space);
+	strcat(full_log, source_adr);
+	strcat(full_log, space);
+	strcat(full_log, dest_adr);
+	strcat(full_log, space);
+	strcat(full_log, type);
+	strcat(full_log, space);
+	strcat(full_log, seqackno);
+	strcat(full_log, space);
+	strcat(full_log, payloadwindow);
+	printf("%s\n",full_log);
+}
+/*
+ * Construct and return an address string for the sake of logging
+ */
+char* get_adrString(struct in_addr adrIp, in_port_t adrPort)
+{
+	char* ip = inet_ntoa(adrIp);
+	int pt = ntohs(adrPort);
+	char* strport = (char*)malloc(sizeof(strport)*10);
+	sprintf(strport, "%d", pt);
+	strcat(ip, ":");
+	strcat(ip, strport);
+	return ip;
 }
 /*
  * Log sender statistics
