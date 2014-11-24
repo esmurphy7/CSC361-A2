@@ -3,6 +3,8 @@
 
 // ============== Prototypes =============
 void setup_connection(char*, int);
+void store_dataPacket(struct packet*);
+void write_file(char*);
 void terminate(int);
 // =============== Globals ===============
 /* List of data packets received so far */
@@ -48,10 +50,12 @@ int main(int argc, char* argv[])
 		{
 			if(rec_pckt->header.type == DAT)
 			{
-				// Send ACK and store data packet
+				// Send ACK
 				add_packet(rec_pckt, data_packets);
 				struct packet* ACK_pckt = create_packet(NULL, 0, ACK, rec_pckt->header.ackno);
 				send_packet(ACK_pckt, socketfd, adr_src);
+				// store data packet in the global list
+				store_dataPacket(rec_pckt);
 			}
 			else if(rec_pckt->header.type == SYN)
 			{
@@ -63,20 +67,23 @@ int main(int argc, char* argv[])
 			{
 				terminate(-1);
 			}
+			// Sender is done transferring
 			else if(rec_pckt->header.type == FIN)
 			{
-				// Send ACK and terminate
+				//send ACK and break to begin writing to file
 				struct packet* ACK_pckt = create_packet(NULL, 0, ACK, rec_pckt->header.ackno);
 				send_packet(ACK_pckt, socketfd, adr_src);
-				terminate(0);
+				break;
 			}
 			if(clock()/CLOCKS_PER_SEC >= RECEIVER_TIMEOUT_S)
 			{
 				terminate(-2);
 			}
+
 		}
 	}
-
+	// should have all data packets stored
+	write_file(filename);
 	return 0;
 }
 
@@ -117,6 +124,42 @@ void setup_connection(char* receiver_ip, int receiver_port)
 		exit(-1);
 	}
 	printf("receiver: running on %s:%d\n",inet_ntoa(adr_receiver.sin_addr), ntohs(adr_receiver.sin_port));
+}
+/*
+ * Store the data packet in the global list of data packets stored so far
+ */
+void store_dataPacket(struct packet* pckt)
+{
+	int i;
+	for(i=0; data_packets[i] != 0; i++)
+	{
+		// if packet has already been stored, ignore it
+		if(data_packets[i]->header.seqno == pckt->header.seqno)
+			break;
+	}
+	// add the packet to the end of the list
+	data_packets[i] = pckt;
+}
+/*
+ * Write the data packets to the output file
+ */
+void write_file(char* filename)
+{
+	// Open file
+	FILE* file;
+	if((file = fopen(filename, "w")) == NULL)
+	{
+		perror("receiver: open\n");
+		exit(-1);
+	}
+	// write every data packet
+	int i;
+	for(i=0; data_packets[i] !=0 ;i++)
+	{
+		fwrite(data_packets[i]->payload, 1, sizeof(data_packets[i]->payload), file);
+	}
+	printf("done writing data to file\n");
+	fclose(file);
 }
 /*
  * Terminate the transfer process with failure or success

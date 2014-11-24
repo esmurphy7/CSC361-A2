@@ -31,6 +31,7 @@ void* poll_timers();
 void fill_window(struct window*);
 void update_windowBase(struct window*);
 void resend_timedoutPackets();
+bool packetACKd(struct packet*);
 bool allPacketsAcknowledged();
 void terminate(int);
 // =============== Globals ===============
@@ -185,7 +186,7 @@ void packetize(char* data, int file_length)
 	int i = 0;
 	while(data_packets[i] != NULL)
 	{
-		if(i){printf("data packet %d seqno: %d, ackno: %d\n",i,data_packets[i]->header.seqno, data_packets[i]->header.ackno);}
+		//if(i){printf("data packet %d seqno: %d, ackno: %d\n",i,data_packets[i]->header.seqno, data_packets[i]->header.ackno);}
 		i++;
 	}
 }
@@ -207,7 +208,7 @@ void initiate_transfer(int last_ackno)
 	int j;
 	for(j=0; data_packets[j] != 0; j++)
 	{
-		struct packet_timer* DAT_timer = create_timer(data_packets[j]->header.ackno, clock());
+		struct packet_timer* DAT_timer = create_timer(data_packets[j]->header.ackno, -1);
 		add_timer(timer_list, DAT_timer);
 	}
 	//print_stoppedTimers(timer_list);
@@ -248,12 +249,12 @@ void initiate_transfer(int last_ackno)
 	// Send initial wave of data packets to fill the window
 	printf("sender: initial wave of data...\n");
 	fill_window(window);
+	printf("Window:\n size->%d\n base_seqno->%d\n occupied->%d\n",window->size,window->base_seqno,window->occupied);
 
 	// Receive ACKs, send data to fill the window, and check for timeouts
 	while(1)
 	{
 		pthread_mutex_lock(&timers_mutex);
-		printf("attempting to print running timers\n");
 		print_runningTimers(timer_list);
 		pthread_mutex_unlock(&timers_mutex);
 		// wait for packet
@@ -262,8 +263,10 @@ void initiate_transfer(int last_ackno)
 		// handle received ACKs
 		handle_packet(rec_pckt);
 		// Update the window's base_seqno as ACKs are received
+		printf("Updating window...\n");
 		update_windowBase(window);
 		/* send new data packets if window permits */
+		printf("Filling window...\n");
 		fill_window(window);
 
 		printf("Resending timedout packets...\n");
@@ -307,6 +310,8 @@ void* poll_timers()
 {
 	while(1)
 	{
+		//printf("PTHREAD: polling\n");
+		sleep(1);
 		pthread_mutex_lock(&timers_mutex);
 		int i;
 		for(i=0; timer_list[i] != 0; i++)
@@ -331,6 +336,7 @@ void fill_window(struct window* window)
 	int i;
 	for(i=0; data_packets[i] != 0; i++)
 	{
+		//printf("Window:\n size->%d\n base_seqno->%d\n occupied->%d\n",window->size,window->base_seqno,window->occupied);
 		// if window is not full
 		if(window->occupied < window->size)
 		{
@@ -338,14 +344,18 @@ void fill_window(struct window* window)
 			if(data_packets[i]->header.seqno >= window->base_seqno &&
 				data_packets[i]->header.seqno <= window->base_seqno + window->size)
 			{
-				// send the data packet
-				send_packet(data_packets[i], socketfd, adr_receiver);
-				// Start its timer
-				pthread_mutex_lock(&timers_mutex);
-				start_timer(data_packets[i]->header.ackno, timer_list);
-				pthread_mutex_unlock(&timers_mutex);
-				// update occupied space in window
-				window->occupied += data_packets[i]->payload_length;
+				// if the packet has not yet been ACKd
+				if(packetACKd(data_packets[i]) == false)
+				{
+					// send the data packet
+					send_packet(data_packets[i], socketfd, adr_receiver);
+					// Start its timer
+					pthread_mutex_lock(&timers_mutex);
+					start_timer(data_packets[i]->header.ackno, timer_list);
+					pthread_mutex_unlock(&timers_mutex);
+					// update occupied space in window
+					window->occupied += data_packets[i]->payload_length;
+				}
 			}
 		}
 		// else window is full
@@ -368,19 +378,17 @@ void update_windowBase(struct window* window)
 		// if it is the window's base
 		if(data_packets[i]->header.seqno == window->base_seqno)
 		{
-			struct packet_timer* timer;
-			if((timer = find_timer(timer_list, data_packets[i]->header.ackno)) != NULL)
+			// if it has been ACK'd
+			if(packetACKd(data_packets[i]))
 			{
-				// if packet has been ACK'd
-				if(timer->running == false)
+				printf("packet is ACK'd\n");
+				// move window base up to next packet's seqno
+				// update the amount of space required
+				if(data_packets[i+1] != 0)
 				{
-					// move window base up to next packet's seqno
-					if(data_packets[i+1] != 0)
-					{
-						window->base_seqno = data_packets[i+1]->header.seqno;
-						window->occupied -= data_packets[i+1]->payload_length;
-
-					}
+					window->base_seqno = data_packets[i+1]->header.seqno;
+					window->occupied -= data_packets[i+1]->payload_length;
+					printf("Window:\n size->%d\n base_seqno->%d\n occupied->%d\n",window->size,window->base_seqno,window->occupied);
 				}
 			}
 		}
@@ -414,32 +422,47 @@ void resend_timedoutPackets()
 	}
 	pthread_mutex_unlock(&timers_mutex);
 }
+/*
+ * Return true if packet has been acknowledged (its timer is not running)
+ */
+bool packetACKd(struct packet* pckt)
+{
+	bool retval = false;
+	pthread_mutex_lock(&timers_mutex);
+	// find timer
+	struct packet_timer* timer;
+	if((timer = find_timer(timer_list, pckt->header.ackno)) != NULL)
+	{
+		if(timer->running == false && timer->time_sent != -1)
+			retval = true;
+	}
+	else
+	{
+		printf("Cannot check if packet %d is ACK'd\n",pckt->header.seqno);
+		exit(-1);
+	}
+	pthread_mutex_unlock(&timers_mutex);
+	return retval;
+}
 
 /*
  * Return true if all data packets have been acknowledged, false otherwise
  */
 bool allPacketsAcknowledged()
 {
-	pthread_mutex_lock(&timers_mutex);
 	bool retval = true;
-	printf("Checking if all data packets ACK'd...\n");
 	// for every data packet
 	int i;
 	for(i=0; data_packets[i] != 0; i++)
 	{
-		struct packet_timer* timer = find_timer(timer_list, data_packets[i]->header.ackno);
-		if(timer != NULL)
+		// if packet hasn't been ACK'd yet
+		if(packetACKd(data_packets[i]) == false)
 		{
-			// if its corresponding timer is no longer running
-			if(timer->running == true)
-			{
-				printf("Timer %d is still running\n",timer->pckt_ackno);
-				retval =  false;
-				break;
-			}
+			printf("Timer %d is still running\n",data_packets[i]->header.ackno);
+			retval =  false;
+			break;
 		}
 	}
-	pthread_mutex_unlock(&timers_mutex);
 	return retval;
 }
 /*
@@ -455,6 +478,7 @@ void handle_packet(struct packet* pckt)
 			// mark data packet as acknowledged by stopping its timer
 			pthread_mutex_lock(&timers_mutex);
 			stop_timer(timer_list, pckt->header.seqno);
+			printf("Timer %d stopped\n", pckt->header.seqno);
 			pthread_mutex_unlock(&timers_mutex);
 			break;
 		case SYN:
