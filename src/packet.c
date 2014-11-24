@@ -82,11 +82,9 @@ void add_packet(struct packet* pckt, struct packet** data_packets)
  */
 void send_packet(struct packet* pckt, int socketfd, struct sockaddr_in adr_dest)
 {
-	//print_contents(pckt);
 	// Construct a string from the packet that can be sent over the network
 	char* buffer = construct_string(pckt);
 	//char* buffer = "this is a test buffer\n";
-	//if(pckt->header.seqno){printf("sending string: %s\n", buffer);}
 	if(sendto(socketfd,
 				buffer,
 				strlen(buffer),
@@ -110,7 +108,6 @@ void send_packet(struct packet* pckt, int socketfd, struct sockaddr_in adr_dest)
 												pckt->header.seqno,
 												pckt->header.ackno,
 												clock());
-	//if(pckt->header.seqno){printf("sent string: %s\n", buffer);}
 	free(buffer);
 }
 
@@ -129,7 +126,6 @@ struct packet* receive_packet(int socketfd, struct sockaddr_in* adr_src)
 	socklen_t src_len = sizeof(adr_src);
 	printf("\nwaiting for packet...\n");
 	// Receive incoming packet
-	//printf("sizeof(buffer) %lu\n",sizeof(buffer));
 	if(recvfrom(socketfd,
 					buffer,
 					PACKET_SIZE,//PACKET_SIZE
@@ -141,10 +137,8 @@ struct packet* receive_packet(int socketfd, struct sockaddr_in* adr_src)
 		//exit(-1);
 	}
 	//printf("packet received from %s:%d\n",inet_ntoa(adr_src->sin_addr), ntohs(adr_src->sin_port));
-	//printf("raw message received - %s\n",buffer);
 	// Deconstruct message string into packet
 	struct packet* rec_pckt = deconstruct_string(buffer);
-	//print_contents(rec_pckt);
 	// Assert that the packet has the magic header field
 	if(strcmp(rec_pckt->header.magic, MAGIC_HDR) == 0)
 	{
@@ -220,7 +214,6 @@ char* construct_string(struct packet* pckt)
 
 struct packet* deconstruct_string(char* buffer)
 {
-	//printf("deconstructing %s...\n",buffer);
 	struct packet* pckt = (struct packet*)malloc(sizeof(*pckt));
 	char* magic = (char*)malloc(sizeof(magic)*sizeof(pckt->header.magic));
 	char* type = (char*)malloc(sizeof(type)*sizeof(pckt->header.type));
@@ -234,7 +227,6 @@ struct packet* deconstruct_string(char* buffer)
 	int i;
 	for(i=0; i<strlen(buffer); i++)
 	{
-		//printf("buffer[%d]: %c\n",i,buffer[i]);
 		if(buffer[i] == ';')
 		{
 			num_semicolons++;
@@ -271,7 +263,6 @@ struct packet* deconstruct_string(char* buffer)
 		}
 		else
 			cur_field = charAppend(cur_field, buffer[i]);
-		//printf("current field: %s\n",cur_field);
 	}
 	strcpy(pckt->header.magic, magic);
 	pckt->header.type = atoi(type);

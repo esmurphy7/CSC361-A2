@@ -24,7 +24,7 @@
 
 // ============== Prototypes =============
 void setup_connection(char*,int,char*,int);
-void packetize(char*, int);
+void packetize(char*, int, int);
 void initiate_transfer(int);
 void handle_packet(struct packet*);
 void* poll_timers();
@@ -33,6 +33,7 @@ void update_windowBase(struct window*);
 void resend_timedoutPackets();
 bool packetACKd(struct packet*);
 bool allPacketsAcknowledged();
+void print_statistics();
 void terminate(int);
 // =============== Globals ===============
 /* List of data packets to be sent */
@@ -47,6 +48,16 @@ int window_size;
 int socketfd;
 struct sockaddr_in adr_sender;
 struct sockaddr_in adr_receiver;
+/* Statistics globals */
+int bytes_sent;
+int unique_bytes_sent;
+int unique_DAT_packets_sent;
+int DAT_packets_sent;
+int SYN_packets_sent;
+int FIN_packets_sent;
+int RST_packets_sent;
+int ACK_packets_received;
+int RST_packets_received;
 // =======================================
 
 int main(int argc, char* argv[])
@@ -94,18 +105,41 @@ int main(int argc, char* argv[])
 	}
 	fclose(file);
 
+	// Calculate payload size based on file length for files of size less than MAX_PAYLOAD_SIZE
+	int payload_size = 0;
+	int i;
+	/*
+	for(i=1; i<=MAX_PAYLOAD_SIZE; i++)
+	{
+		// found a factor
+		if(file_length%i==0)
+		{
+			// if it's a greater factor
+			if(i > payload_size)
+				payload_size = i;
+		}
+	}
+	*/
+	payload_size = MAX_PAYLOAD_SIZE;
+	printf("Payload size: %d\n",payload_size);
 	// Calculate number of data packets to be stored
-	float n = ((float)file_length) / ((float)MAX_PAYLOAD_SIZE);
-	float num_packets = ceil(n);
-	printf("Number of data packets: %f\n", num_packets);
+	float n = ((float)file_length) / ((float)payload_size);
+	int num_packets = ceil(n);
+	printf("Number of data packets: %d\n", num_packets);
 	// Init globals
-	data_packets = (struct packet**)calloc(num_packets, sizeof(struct packet*));
+	data_packets = (struct packet**)calloc(num_packets+1, sizeof(struct packet*));
+	// print contents of data_packets
+	for(i=0; data_packets[i] == 0; i++)
+	{
+		//printf("data_packets[%d] is 0\n",i);
+	}
+	if(data_packets[num_packets] != 0){printf("data_packets[%d] is not 0\n",num_packets);}
 	window_size = file_length/10;
 	printf("window size: %d\n",window_size);
 
 	setup_connection(sender_ip, sender_port, receiver_ip, receiver_port);
-	packetize(data, file_length);
-	initiate_transfer(file_length+MAX_PAYLOAD_SIZE-1);
+	packetize(data, file_length, payload_size);
+	initiate_transfer(file_length+payload_size-1);
 	return 0;
 }
 
@@ -122,8 +156,8 @@ void setup_connection(char* sender_ip, int sender_port, char* receiver_ip, int r
 	}
 	// Set timeout value for the recvfrom
 	struct timeval tv;
-	tv.tv_sec = 2;
-	tv.tv_usec = 0;
+	tv.tv_sec = 0;
+	tv.tv_usec = 100000; // 1sec = 1,000,000 microseconds. 10th of a second
 	if (setsockopt(socketfd, SOL_SOCKET, SO_RCVTIMEO,&tv,sizeof(tv)) < 0)
 	{
 	    perror("setsockopt():");
@@ -158,7 +192,7 @@ void setup_connection(char* sender_ip, int sender_port, char* receiver_ip, int r
 /*
  * Convert the file's data into a number of packets
  */
-void packetize(char* data, int file_length)
+void packetize(char* data, int file_length, int payload_size)
 {
 	int current_byte;	// Index of "data"
 	int bytes_read;		// Bytes read from "data"
@@ -168,20 +202,22 @@ void packetize(char* data, int file_length)
 	// Move bytes from data buffer into pckt_data and create packets
 	current_byte = 0;
 	bytes_read = 0;
-	pckt_data = (char*)malloc(sizeof(pckt_data)*MAX_PAYLOAD_SIZE);
+	pckt_data = (char*)malloc(sizeof(pckt_data)*payload_size);
 	printf("Reading file...\n");
 	while(current_byte < file_length)
 	{
 		pckt_data[bytes_read] = data[current_byte];
-		if(bytes_read == MAX_PAYLOAD_SIZE)
+		if(bytes_read == payload_size)
 		{
 			//printf("Current byte: %d, Bytes read: %d\n",current_byte, bytes_read);
 			struct packet* pckt = create_packet(pckt_data, bytes_read, DAT, current_byte - bytes_read + 1);
 			add_packet(pckt, data_packets);
 			free(pckt_data);
-			pckt_data = (char*)malloc(sizeof(pckt_data)*MAX_PAYLOAD_SIZE);
+			pckt_data = (char*)malloc(sizeof(pckt_data)*payload_size);
 			bytes_read = 0;
 		}
+		//printf("bytes_read: %d\n",bytes_read);
+		//printf("current_byte: %d\n",current_byte);
 		bytes_read++;
 		current_byte++;
 	}
@@ -193,9 +229,10 @@ void packetize(char* data, int file_length)
 	printf("sender: end of file\n");
 	// Debug: print list of data packets
 	int i = 0;
-	while(data_packets[i] != NULL)
+	while(data_packets[i] != 0)
 	{
 		//if(i){printf("data packet %d seqno: %d, ackno: %d\n",i,data_packets[i]->header.seqno, data_packets[i]->header.ackno);}
+		//if(i){printf("Data_packets[%d]:\n",i);print_contents(data_packets[i]);}
 		i++;
 	}
 }
@@ -217,6 +254,7 @@ void initiate_transfer(int last_ackno)
 	int j;
 	for(j=0; data_packets[j] != 0; j++)
 	{
+		//if(j){printf("Attempting to create timer with data_packets[%d]...\n",j);}
 		struct packet_timer* DAT_timer = create_timer(data_packets[j]->header.ackno, -1);
 		add_timer(timer_list, DAT_timer);
 	}
@@ -224,12 +262,21 @@ void initiate_transfer(int last_ackno)
 	pthread_mutex_unlock(&timers_mutex);
 
 	// send SYN
+	printf("creating SYN packet...\n");
 	struct packet* SYN_pckt = create_packet(NULL, 0, SYN, first_seqno);
+	printf("created SYN packet\n");
+	// update statistics
 	send_packet(SYN_pckt, socketfd, adr_receiver);
+	bytes_sent += SYN_pckt->payload_length;
+	unique_bytes_sent += SYN_pckt->payload_length;
+	SYN_packets_sent++;
+	// start SYN's timer
 	pthread_mutex_lock(&timers_mutex);
+	printf("Creating SYN timer...\n");
 	struct packet_timer* SYN_timer = create_timer(SYN_pckt->header.ackno, clock());
 	add_timer(timer_list, SYN_timer);
 	start_timer(SYN_pckt->header.ackno, timer_list);
+	printf("Created, added, and started SYN timer\n");
 	pthread_mutex_unlock(&timers_mutex);
 	// wait on SYN's ACK
 	while(1)
@@ -238,12 +285,19 @@ void initiate_transfer(int last_ackno)
 		struct packet* rec_pckt = receive_packet(socketfd, &adr_src);
 		if(rec_pckt && rec_pckt->header.type == ACK)
 		{
+			// update statistics
+			ACK_packets_received++;
 			printf("sender: SYN acknowledged\n");
 			pthread_mutex_lock(&timers_mutex);
 			stop_timer(timer_list, SYN_pckt->header.ackno);
 			pthread_mutex_unlock(&timers_mutex);
 			break;
 		}
+		// resend the SYN packet
+		send_packet(SYN_pckt, socketfd, adr_receiver);
+		// update statistics
+		bytes_sent += SYN_pckt->payload_length;
+		SYN_packets_sent++;
 		if(clock()/CLOCKS_PER_SEC >= SENDER_TIMEOUT_S)
 		{
 			terminate(-2);
@@ -263,9 +317,11 @@ void initiate_transfer(int last_ackno)
 	// Receive ACKs, send data to fill the window, and check for timeouts
 	while(1)
 	{
+		/*
 		pthread_mutex_lock(&timers_mutex);
 		print_runningTimers(timer_list);
 		pthread_mutex_unlock(&timers_mutex);
+		*/
 		// wait for packet
 		struct sockaddr_in adr_src;
 		struct packet* rec_pckt;
@@ -292,6 +348,10 @@ void initiate_transfer(int last_ackno)
 			int FIN_seqno = last_ackno;
 			struct packet* FIN_pckt = create_packet(NULL, 0, FIN, FIN_seqno);
 			send_packet(FIN_pckt, socketfd, adr_receiver);
+			// Update statistics
+			bytes_sent += FIN_pckt->payload_length;
+			unique_bytes_sent += FIN_pckt->payload_length;
+			FIN_packets_sent++;
 			// Start its timer
 			pthread_mutex_lock(&timers_mutex);
 			struct packet_timer* FIN_timer = create_timer(FIN_pckt->header.ackno, clock());
@@ -305,6 +365,7 @@ void initiate_transfer(int last_ackno)
 				if(rec_pckt->header.seqno == FIN_pckt->header.ackno)
 				{
 					printf("FIN ACK RECEIVED\n");
+					print_statistics();
 					terminate(0);
 				}
 			}
@@ -325,18 +386,25 @@ void* poll_timers()
 	while(1)
 	{
 		//printf("PTHREAD: polling\n");
-		sleep(1);
+		//sleep(1);
+		struct timespec time, time2;
+		time.tv_sec = 0;
+		time.tv_nsec = 10000000L; // 1sec = 1,000,000,000 nanoseconds. 100th of a second
+		nanosleep(&time, &time2);
 		pthread_mutex_lock(&timers_mutex);
 		int i;
 		for(i=0; timer_list[i] != 0; i++)
 		{
 			struct packet_timer* timer = timer_list[i];
-			//printf("PTHREAD: checking if timer %d has timed out with current time: %ld \n",timer->pckt_ackno, clock());
-			if(timed_out(timer->pckt_ackno, timer_list, clock()))
-			{
-				printf("PTHREAD: timer %d has timedout\n",timer->pckt_ackno);
-				timer->timedout = true;
-			}
+			// make sure that the timer is running and it's data packet has been sent
+
+				//printf("PTHREAD: checking if timer %d has timed out with current time: %ld \n",timer->pckt_ackno, clock());
+				if(timed_out(timer->pckt_ackno, timer_list, clock()))
+				{
+					//printf("PTHREAD: timer %d has timedout\n",timer->pckt_ackno);
+					timer->timedout = true;
+				}
+
 		}
 		pthread_mutex_unlock(&timers_mutex);
 	}
@@ -348,10 +416,11 @@ void* poll_timers()
  */
 void fill_window(struct window* window)
 {
+	//printf("Filling window...\n");
+	//printf("Window:\n size->%d\n base_seqno->%d\n space->%d\n",window->size,window->base_seqno,(window->size - window->occupied));
 	int i;
 	for(i=0; data_packets[i] != 0; i++)
 	{
-		//printf("Window:\n size->%d\n base_seqno->%d\n occupied->%d\n",window->size,window->base_seqno,window->occupied);
 		// if window is not full
 		if(window->occupied < window->size)
 		{
@@ -364,6 +433,11 @@ void fill_window(struct window* window)
 				{
 					// send the data packet
 					send_packet(data_packets[i], socketfd, adr_receiver);
+					// update statistics
+					bytes_sent += data_packets[i]->payload_length;
+					unique_bytes_sent += data_packets[i]->payload_length;
+					unique_DAT_packets_sent++;
+					DAT_packets_sent++;
 					// Start its timer
 					pthread_mutex_lock(&timers_mutex);
 					start_timer(data_packets[i]->header.ackno, timer_list);
@@ -429,6 +503,9 @@ void resend_timedoutPackets()
 				{
 					// resend the data packet
 					send_packet(data_packets[i], socketfd, adr_receiver);
+					// update statistics
+					bytes_sent += data_packets[i]->payload_length;
+					DAT_packets_sent++;
 					// restart its timer
 					start_timer(data_packets[i]->header.ackno, timer_list);
 				}
@@ -473,7 +550,7 @@ bool allPacketsAcknowledged()
 		// if packet hasn't been ACK'd yet
 		if(packetACKd(data_packets[i]) == false)
 		{
-			printf("Timer %d is still running\n",data_packets[i]->header.ackno);
+			//printf("Timer %d is still running\n",data_packets[i]->header.ackno);
 			retval =  false;
 			break;
 		}
@@ -490,15 +567,19 @@ void handle_packet(struct packet* pckt)
 		case DAT:
 			break;
 		case ACK:
+			// update statistics
+			ACK_packets_received++;
 			// mark data packet as acknowledged by stopping its timer
 			pthread_mutex_lock(&timers_mutex);
 			stop_timer(timer_list, pckt->header.seqno);
-			printf("Timer %d stopped\n", pckt->header.seqno);
+			//printf("Timer %d stopped\n", pckt->header.seqno);
 			pthread_mutex_unlock(&timers_mutex);
 			break;
 		case SYN:
 			break;
 		case RST:
+			// update statistics
+			RST_packets_received++;
 			break;
 		case FIN:
 			break;
@@ -506,7 +587,25 @@ void handle_packet(struct packet* pckt)
 			break;
 	}
 }
-
+/*
+ * Log sender statistics
+ */
+void print_statistics()
+{
+	printf("Sender Statistics:\n");
+	printf(" Total data bytes sent: %d\n",bytes_sent);
+	printf(" Unique data bytes sent: %d\n",unique_bytes_sent);
+	printf(" Total data packets sent: %d\n",DAT_packets_sent);
+	printf(" Unique data packets sent: %d\n",unique_DAT_packets_sent);
+	printf(" SYN packets sent: %d\n",SYN_packets_sent);
+	printf(" FIN packets sent: %d\n",FIN_packets_sent);
+	printf(" RST packets sent: %d\n",RST_packets_sent);
+	printf(" ACK packets received: %d\n",ACK_packets_received);
+	printf(" RST packets received: %d\n",RST_packets_received);
+	clock_t time = clock();
+	double int_time = (double)time/CLOCKS_PER_SEC;
+	printf(" Transfer duration: %f\n",int_time);
+}
 /*
  * Terminate the transfer process with failure or success
  * param code: <0 failure (RST), >=0 success (FIN)

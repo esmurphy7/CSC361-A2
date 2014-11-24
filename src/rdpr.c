@@ -3,8 +3,10 @@
 
 // ============== Prototypes =============
 void setup_connection(char*, int);
+bool DATisUnique(struct packet*);
 void store_dataPacket(struct packet*);
 void write_file(char*);
+void print_statistics();
 void terminate(int);
 // =============== Globals ===============
 /* List of data packets received so far */
@@ -14,6 +16,16 @@ int window_size;
 int socketfd;
 struct sockaddr_in adr_sender;
 struct sockaddr_in adr_receiver;
+/* Statistics globals */
+int DAT_bytes_received;
+int unique_DAT_bytes_received;
+int DAT_packets_received;
+int unique_DAT_packets_received;
+int SYN_packets_received;
+int FIN_packets_received;
+int RST_packets_received;
+int ACK_packets_sent;
+int RST_packets_sent;
 // =======================================
 
 int main(int argc, char* argv[])
@@ -54,6 +66,15 @@ int main(int argc, char* argv[])
 				add_packet(rec_pckt, data_packets);
 				struct packet* ACK_pckt = create_packet(NULL, 0, ACK, rec_pckt->header.ackno);
 				send_packet(ACK_pckt, socketfd, adr_src);
+				// update statistics
+				ACK_packets_sent++;
+				DAT_bytes_received += rec_pckt->payload_length;
+				DAT_packets_received++;
+				if(DATisUnique(rec_pckt))
+				{
+					unique_DAT_bytes_received += rec_pckt->payload_length;
+					unique_DAT_packets_received++;
+				}
 				// store data packet in the global list
 				store_dataPacket(rec_pckt);
 			}
@@ -62,9 +83,13 @@ int main(int argc, char* argv[])
 				// Send ACK
 				struct packet* ACK_pckt = create_packet(NULL, 0, ACK, rec_pckt->header.ackno);
 				send_packet(ACK_pckt, socketfd, adr_src);
+				// update statistics
+				SYN_packets_received++;
+				ACK_packets_sent++;
 			}
 			else if(rec_pckt->header.type == RST)
 			{
+				RST_packets_received++;
 				terminate(-1);
 			}
 			// Sender is done transferring
@@ -73,6 +98,9 @@ int main(int argc, char* argv[])
 				//send ACK and break to begin writing to file
 				struct packet* ACK_pckt = create_packet(NULL, 0, ACK, rec_pckt->header.ackno);
 				send_packet(ACK_pckt, socketfd, adr_src);
+				// update statistics
+				FIN_packets_received++;
+				ACK_packets_sent++;
 				break;
 			}
 			if(clock()/CLOCKS_PER_SEC >= RECEIVER_TIMEOUT_S)
@@ -83,6 +111,7 @@ int main(int argc, char* argv[])
 		}
 	}
 	// should have all data packets stored
+	print_statistics();
 	write_file(filename);
 	return 0;
 }
@@ -110,7 +139,8 @@ void setup_connection(char* receiver_ip, int receiver_port)
 	// Create sender address
 	memset(&adr_sender,0,sizeof adr_sender);
 	adr_sender.sin_family = AF_INET;
-	adr_sender.sin_port = htons(8080);
+	//adr_sender.sin_port = htons(8080);
+	adr_sender.sin_port = htons(6969);
 	adr_sender.sin_addr.s_addr = inet_addr("192.168.1.100");
 	//adr_sender.sin_addr.s_addr = inet_addr("142.104.74.69");
 	//adr_sender.sin_addr.s_addr = inet_addr("127.0.0.1");
@@ -150,6 +180,19 @@ void store_dataPacket(struct packet* pckt)
 	data_packets[i] = pckt;
 }
 /*
+ * Check if data packet is unique and not a re-send
+ */
+bool DATisUnique(struct packet* pckt)
+{
+	int i;
+	for(i=0; data_packets[i] != 0; i++)
+	{
+		if(data_packets[i]->header.seqno == pckt->header.seqno)
+			return true;
+	}
+	return false;
+}
+/*
  * Write the data packets to the output file
  */
 void write_file(char* filename)
@@ -169,6 +212,25 @@ void write_file(char* filename)
 	}
 	printf("DONE WRITING TO FILE: %s\n",filename);
 	fclose(file);
+}
+/*
+ * Log receiver statistics
+ */
+void print_statistics()
+{
+	printf("Receiver Statistics:\n");
+	printf(" Total data bytes received: %d\n",DAT_bytes_received);
+	printf(" Unique data bytes received: %d\n",unique_DAT_bytes_received);
+	printf(" Total data packets received: %d\n",DAT_packets_received);
+	printf(" Unique data packets received: %d\n",unique_DAT_packets_received);
+	printf(" SYN packets received: %d\n",SYN_packets_received);
+	printf(" FIN packets received: %d\n",FIN_packets_received);
+	printf(" RST packets received: %d\n",RST_packets_received);
+	printf(" ACK packets sent: %d\n",ACK_packets_sent);
+	printf(" RST packets sent: %d\n",RST_packets_sent);
+	clock_t time = clock();
+	double int_time = (double)time/CLOCKS_PER_SEC;
+	printf(" Transfer duration: %f\n",int_time);
 }
 /*
  * Terminate the transfer process with failure or success

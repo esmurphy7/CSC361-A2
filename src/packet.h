@@ -13,7 +13,7 @@
 // Max number of bytes allowed in a packet
 #define PACKET_SIZE 1500
 #define MAX_PAYLOAD_SIZE 1024
-#define MAX_PACKETS 2000
+#define MAX_PACKETS 50000
 #define MAGIC_HDR "UVicCSc361"
 // Number of fields in the packet
 #define NUM_FIELDS 7

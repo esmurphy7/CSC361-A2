@@ -5,9 +5,9 @@
 
 // Packet timeout value in seconds and microseconds respectively
 #define TIMEOUT_S 1
-#define TIMEOUT_US 1000000
+#define TIMEOUT_US 100000
 // Max number of timers
-#define MAX_TIMERS 10000
+#define MAX_TIMERS 50000
 // Sender and receiver ultimate time out
 #define RECEIVER_TIMEOUT_S 300
 #define SENDER_TIMEOUT_S 300
